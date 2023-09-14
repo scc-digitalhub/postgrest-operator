@@ -1,0 +1,12 @@
+apiVersion: postgrest.postgrest.digitalhub/v1
+kind: Postgrest
+metadata:
+  labels:
+    app.kubernetes.io/name: postgrest
+    app.kubernetes.io/instance: postgrest-sample
+    app.kubernetes.io/part-of: postgrest-operator
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/created-by: postgrest-operator
+  name: postgrest-sample
+spec:
+  # TODO(user): Add fields here

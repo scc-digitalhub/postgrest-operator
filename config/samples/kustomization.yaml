@@ -1,0 +1,4 @@
+## Append samples of your project ##
+resources:
+- postgrest_v1_postgrest.yaml
+#+kubebuilder:scaffold:manifestskustomizesamples
