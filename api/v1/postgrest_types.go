@@ -25,17 +25,29 @@ import (
 
 // PostgrestSpec defines the desired state of Postgrest
 type PostgrestSpec struct {
-	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
+	// +operator-sdk:csv:customresourcedefinitions:type=spec
+	DatabaseUri string `json:"databaseUri,omitempty"` // PGRST_DB_URI
 
-	// Foo is an example field of Postgrest. Edit postgrest_types.go to remove/update
-	Foo string `json:"foo,omitempty"`
+	// +operator-sdk:csv:customresourcedefinitions:type=spec
+	Schemas string `json:"schema,omitempty"` // PGRST_DB_SCHEMAS
+
+	// TODO tables for list of tables to expose
+	// TODO flag for read/write permissions
+
+	// +operator-sdk:csv:customresourcedefinitions:type=spec
+	// if specified: check it exists, assume its permissions are already correct
+	// if not specified: create with permissions as <clean CR name>_postgrest_role
+	AnonRole string `json:"anonRole,omitempty"` // PGRST_DB_ANON_ROLE
+
+	// TODO authentication -> basic/jwt
+	// authentication.basic.user + authentication.basic.password
+	// authentication.jwt.secret
 }
 
 // PostgrestStatus defines the observed state of Postgrest
 type PostgrestStatus struct {
-	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
+	// +operator-sdk:csv:customresourcedefinitions:type=status
+	Conditions []metav1.Condition `json:"conditions,omitempty" patchStrategy:"merge" patchMergeKey:"type" protobuf:"bytes,1,rep,name=conditions"`
 }
 
 //+kubebuilder:object:root=true
