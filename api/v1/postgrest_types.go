@@ -20,7 +20,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
 // NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
 
 // PostgrestSpec defines the desired state of Postgrest
@@ -29,19 +28,35 @@ type PostgrestSpec struct {
 	DatabaseUri string `json:"databaseUri,omitempty"` // PGRST_DB_URI
 
 	// +operator-sdk:csv:customresourcedefinitions:type=spec
-	Schemas string `json:"schema,omitempty"` // PGRST_DB_SCHEMAS
+	Schemas string `json:"schemas,omitempty"` // PGRST_DB_SCHEMAS
 
-	// TODO tables for list of tables to expose
-	// TODO flag for read/write permissions
+	// +operator-sdk:csv:customresourcedefinitions:type=spec
+	Tables []string `json:"tables,omitempty"`
+
+	// +operator-sdk:csv:customresourcedefinitions:type=spec
+	ReadOnly bool `json:"readOnly,omitempty"`
 
 	// +operator-sdk:csv:customresourcedefinitions:type=spec
 	// if specified: check it exists, assume its permissions are already correct
 	// if not specified: create with permissions as <clean CR name>_postgrest_role
-	AnonRole string `json:"anonRole,omitempty"` // PGRST_DB_ANON_ROLE
+	AnonRole *string `json:"anonRole,omitempty"` // PGRST_DB_ANON_ROLE
 
-	// TODO authentication -> basic/jwt
-	// authentication.basic.user + authentication.basic.password
-	// authentication.jwt.secret
+	// +operator-sdk:csv:customresourcedefinitions:type=spec
+	Authentication Authentication `json:"authentication,omitempty"`
+}
+
+type Authentication struct {
+	Basic AuthenticationBasic `json:"basic,omitempty"`
+	Jwt   AuthenticationJwt   `json:"jwt,omitempty"`
+}
+
+type AuthenticationBasic struct {
+	User     string `json:"user,omitempty"`
+	Password string `json:"password,omitempty"`
+}
+
+type AuthenticationJwt struct {
+	Secret string `json:"secret,omitempty"`
 }
 
 // PostgrestStatus defines the observed state of Postgrest

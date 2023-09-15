@@ -18,9 +18,13 @@ package controller
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
+
+	_ "github.com/lib/pq"
 
 	"k8s.io/apimachinery/pkg/api/meta"
 
@@ -39,20 +43,21 @@ import (
 	postgrestv1 "github.com/scc-digitalhub/postgrest-operator/api/v1"
 )
 
-// scc-digitalhub = repo 1° comando (example)
-// postgrest = group 2° comando (cache)
-
 const image = "postgrest/postgrest:v11.2.0"
 
 const postgrestFinalizer = "postgrest.postgrest.digitalhub/finalizer"
 
 // Definitions to manage status conditions
 const (
-	// TODO initializing, running, error, degraded (delete anon role)
-	// typeAvailablePostgrest represents the status of the Deployment reconciliation
-	typeAvailablePostgrest = "Available"
-	// typeDegradedPostgrest represents the status used when the custom resource is deleted and the finalizer operations must occur.
-	typeDegradedPostgrest = "Degraded"
+	// When anon role is being created, before deployment
+	typeInitializing = "Initializing"
+
+	typeRunning = "Running"
+
+	typeError = "Error"
+
+	// Custom resource is deleted, perform finalizer operations
+	typeDegraded = "Degraded"
 )
 
 // PostgrestReconciler reconciles a Postgrest object
@@ -107,7 +112,13 @@ func (r *PostgrestReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 	// Let's just set the status as Unknown when no status are available
 	if postgrest.Status.Conditions == nil || len(postgrest.Status.Conditions) == 0 {
-		meta.SetStatusCondition(&postgrest.Status.Conditions, metav1.Condition{Type: typeAvailablePostgrest, Status: metav1.ConditionUnknown, Reason: "Reconciling", Message: "Starting reconciliation"})
+		// Create anonymous role, if it doesn't exist
+		err = createAnonRole(postgrest)
+		if err != nil {
+			log.Error(err, "Error while handling anonymous role")
+		}
+
+		meta.SetStatusCondition(&postgrest.Status.Conditions, metav1.Condition{Type: typeInitializing, Status: metav1.ConditionUnknown, Reason: "Reconciling", Message: "Starting reconciliation"})
 		if err = r.Status().Update(ctx, postgrest); err != nil {
 			log.Error(err, "Failed to update Postgrest status")
 			return ctrl.Result{}, err
@@ -148,7 +159,7 @@ func (r *PostgrestReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			log.Info("Performing Finalizer Operations for Postgrest before delete CR")
 
 			// Let's add here an status "Downgrade" to define that this resource begin its process to be terminated.
-			meta.SetStatusCondition(&postgrest.Status.Conditions, metav1.Condition{Type: typeDegradedPostgrest,
+			meta.SetStatusCondition(&postgrest.Status.Conditions, metav1.Condition{Type: typeDegraded,
 				Status: metav1.ConditionUnknown, Reason: "Finalizing",
 				Message: fmt.Sprintf("Performing finalizer operations for the custom resource: %s ", postgrest.Name)})
 
@@ -159,7 +170,10 @@ func (r *PostgrestReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 			// Perform all operations required before remove the finalizer and allow
 			// the Kubernetes API to remove the custom resource.
-			r.doFinalizerOperationsForPostgrest(postgrest)
+			if err := r.doFinalizerOperationsForPostgrest(postgrest); err != nil {
+				log.Error(err, "Finalizer operations failed")
+				// return ctrl.Result{Requeue: true}, nil
+			}
 
 			// TODO(user): If you add operations to the doFinalizerOperationsForPostgrest method
 			// then you need to ensure that all worked fine before deleting and updating the Downgrade status
@@ -174,7 +188,7 @@ func (r *PostgrestReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 				return ctrl.Result{}, err
 			}
 
-			meta.SetStatusCondition(&postgrest.Status.Conditions, metav1.Condition{Type: typeDegradedPostgrest,
+			meta.SetStatusCondition(&postgrest.Status.Conditions, metav1.Condition{Type: typeDegraded,
 				Status: metav1.ConditionTrue, Reason: "Finalizing",
 				Message: fmt.Sprintf("Finalizer operations for custom resource %s name were successfully accomplished", postgrest.Name)})
 
@@ -201,13 +215,14 @@ func (r *PostgrestReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	found := &appsv1.Deployment{}
 	err = r.Get(ctx, types.NamespacedName{Name: postgrest.Name, Namespace: postgrest.Namespace}, found)
 	if err != nil && apierrors.IsNotFound(err) {
+
 		// Define a new deployment
 		dep, err := r.deploymentForPostgrest(postgrest)
 		if err != nil {
 			log.Error(err, "Failed to define new Deployment resource for Postgrest")
 
 			// The following implementation will update the status
-			meta.SetStatusCondition(&postgrest.Status.Conditions, metav1.Condition{Type: typeAvailablePostgrest,
+			meta.SetStatusCondition(&postgrest.Status.Conditions, metav1.Condition{Type: typeError,
 				Status: metav1.ConditionFalse, Reason: "Reconciling",
 				Message: fmt.Sprintf("Failed to create Deployment for the custom resource (%s): (%s)", postgrest.Name, err)})
 
@@ -238,7 +253,7 @@ func (r *PostgrestReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	}
 
 	// The following implementation will update the status
-	meta.SetStatusCondition(&postgrest.Status.Conditions, metav1.Condition{Type: typeAvailablePostgrest,
+	meta.SetStatusCondition(&postgrest.Status.Conditions, metav1.Condition{Type: typeRunning,
 		Status: metav1.ConditionTrue, Reason: "Reconciling",
 		Message: fmt.Sprintf("Deployment for custom resource (%s) created successfully", postgrest.Name)})
 
@@ -250,12 +265,79 @@ func (r *PostgrestReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	return ctrl.Result{}, nil
 }
 
+// TODO where to call this?
+func createAnonRole(cr *postgrestv1.Postgrest) error {
+	// Connect to database
+	db, err := sql.Open("postgres", cr.Spec.DatabaseUri)
+	if err != nil {
+		return (err)
+	}
+	defer db.Close()
+
+	// If anonymous role is defined, check if it exists
+	if cr.Spec.AnonRole != nil {
+		rows, err := db.Query("SELECT FROM pg_catalog.pg_roles WHERE rolname = $1", cr.Spec.AnonRole)
+		if err != nil {
+			return (err)
+		}
+		if rows == nil {
+			return errors.New("declared anonymous role does not exist")
+		}
+	} else {
+		// Create anonymous role
+		anonRole := cleanAnonRole(cr.Name)
+		_, err = db.Exec("CREATE ROLE IF NOT EXISTS $1 LOGIN", anonRole)
+		if err != nil {
+			return (err)
+		}
+
+		// Assign permissions on tables
+		for _, table := range cr.Spec.Tables {
+			_, err = db.Exec("GRANT ALL ON TABLE $1 TO $2", table, anonRole)
+			if err != nil {
+				return (err)
+			}
+		}
+	}
+
+	return nil
+}
+
+func cleanAnonRole(crName string) string {
+	cleanDots := strings.Replace(crName, ".", "_", -1)
+	cleanSpaces := strings.Replace(cleanDots, " ", "_", -1)
+	return strings.ToLower(cleanSpaces) + "_postgrest_role"
+}
+
+func deleteAnonRole(cr *postgrestv1.Postgrest) error {
+	// Only delete anonymous role if it was created by the controller
+	if cr.Spec.AnonRole == nil {
+		// Connect to database
+		db, err := sql.Open("postgres", cr.Spec.DatabaseUri)
+		if err != nil {
+			return (err)
+		}
+		defer db.Close()
+
+		_, err = db.Exec("DROP ROLE IF EXISTS $1", cr.Spec.AnonRole)
+		if err != nil {
+			return (err)
+		}
+	}
+
+	return nil
+}
+
 // Will perform the required operations before delete the CR.
-func (r *PostgrestReconciler) doFinalizerOperationsForPostgrest(cr *postgrestv1.Postgrest) {
+func (r *PostgrestReconciler) doFinalizerOperationsForPostgrest(cr *postgrestv1.Postgrest) error {
 	// TODO(user): Add the cleanup steps that the operator
 	// needs to do before the CR can be deleted. Examples
 	// of finalizers include performing backups and deleting
 	// resources that are not owned by this CR, like a PVC.
+	err := deleteAnonRole(cr)
+	if err != nil {
+		return err
+	}
 
 	// Note: It is not recommended to use finalizers with the purpose of delete resources which are
 	// created and managed in the reconciliation. These ones, such as the Deployment created on this reconcile,
@@ -268,6 +350,8 @@ func (r *PostgrestReconciler) doFinalizerOperationsForPostgrest(cr *postgrestv1.
 		fmt.Sprintf("Custom Resource %s is being deleted from the namespace %s",
 			cr.Name,
 			cr.Namespace))
+
+	return nil
 }
 
 // deploymentForPostgrest returns a Postgrest Deployment object
@@ -361,15 +445,15 @@ func (r *PostgrestReconciler) deploymentForPostgrest(
 						Env: []corev1.EnvVar{
 							{
 								Name:  "PGRST_DB_URI",
-								Value: "postgres://postgres:postgres@postgres:5432/digitalhub",
+								Value: postgrest.Spec.DatabaseUri,
 							},
 							{
 								Name:  "PGRST_DB_SCHEMA",
-								Value: "test_scenario, graphql, public",
+								Value: postgrest.Spec.Schemas,
 							},
 							{
 								Name:  "PGRST_DB_ANON_ROLE",
-								Value: "test_scenario_user",
+								Value: *postgrest.Spec.AnonRole,
 							},
 						},
 						Command: []string{"postgrest"},
@@ -390,9 +474,7 @@ func (r *PostgrestReconciler) deploymentForPostgrest(
 // labelsForPostgrest returns the labels for selecting the resources
 // More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/common-labels/
 func labelsForPostgrest(name string) map[string]string {
-	var imageTag string
-
-	imageTag = strings.Split(image, ":")[1]
+	imageTag := strings.Split(image, ":")[1]
 
 	return map[string]string{"app.kubernetes.io/name": "Postgrest",
 		"app.kubernetes.io/instance":   name,
