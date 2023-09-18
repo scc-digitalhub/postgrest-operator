@@ -1,12 +1,17 @@
 apiVersion: postgrest.postgrest.digitalhub/v1
 kind: Postgrest
 metadata:
-  labels:
-    app.kubernetes.io/name: postgrest
-    app.kubernetes.io/instance: postgrest-sample
-    app.kubernetes.io/part-of: postgrest-operator
-    app.kubernetes.io/managed-by: kustomize
-    app.kubernetes.io/created-by: postgrest-operator
   name: postgrest-sample
 spec:
-  # TODO(user): Add fields here
+  databaseUri: postgresql://postgres:postgres@192.168.1.129:5432/postgres?sslmode=disable
+  schemas: operator
+  anonRole: anon
+  tables:
+    - operator.test
+  readOnly: true
+  authentication:
+    basic:
+      user: postgres
+      password: postgres123
+    jwt:
+      secret: test123

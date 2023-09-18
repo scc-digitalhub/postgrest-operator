@@ -112,13 +112,7 @@ func (r *PostgrestReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 	// Let's just set the status as Unknown when no status are available
 	if postgrest.Status.Conditions == nil || len(postgrest.Status.Conditions) == 0 {
-		// Create anonymous role, if it doesn't exist
-		err = createAnonRole(postgrest)
-		if err != nil {
-			log.Error(err, "Error while handling anonymous role")
-		}
-
-		meta.SetStatusCondition(&postgrest.Status.Conditions, metav1.Condition{Type: typeInitializing, Status: metav1.ConditionUnknown, Reason: "Reconciling", Message: "Starting reconciliation"})
+		meta.SetStatusCondition(&postgrest.Status.Conditions, metav1.Condition{Type: typeRunning, Status: metav1.ConditionUnknown, Reason: "Reconciling", Message: "Starting reconciliation"})
 		if err = r.Status().Update(ctx, postgrest); err != nil {
 			log.Error(err, "Failed to update Postgrest status")
 			return ctrl.Result{}, err
@@ -216,6 +210,20 @@ func (r *PostgrestReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	err = r.Get(ctx, types.NamespacedName{Name: postgrest.Name, Namespace: postgrest.Namespace}, found)
 	if err != nil && apierrors.IsNotFound(err) {
 
+		meta.SetStatusCondition(&postgrest.Status.Conditions, metav1.Condition{Type: typeInitializing,
+			Status: metav1.ConditionFalse, Reason: "Initializing",
+			Message: "Creating anonymous role."})
+
+		if err := r.Status().Update(ctx, postgrest); err != nil {
+			log.Error(err, "Failed to update Postgrest status")
+			return ctrl.Result{}, err
+		}
+
+		err = createAnonRole(postgrest, ctx)
+		if err != nil {
+			log.Error(err, "Error while handling anonymous role")
+		}
+
 		// Define a new deployment
 		dep, err := r.deploymentForPostgrest(postgrest)
 		if err != nil {
@@ -266,7 +274,7 @@ func (r *PostgrestReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 }
 
 // TODO where to call this?
-func createAnonRole(cr *postgrestv1.Postgrest) error {
+func createAnonRole(cr *postgrestv1.Postgrest, ctx context.Context) error {
 	// Connect to database
 	db, err := sql.Open("postgres", cr.Spec.DatabaseUri)
 	if err != nil {
@@ -280,20 +288,34 @@ func createAnonRole(cr *postgrestv1.Postgrest) error {
 		if err != nil {
 			return (err)
 		}
-		if rows == nil {
+		if rows == nil || !rows.Next() {
 			return errors.New("declared anonymous role does not exist")
 		}
 	} else {
 		// Create anonymous role
 		anonRole := cleanAnonRole(cr.Name)
-		_, err = db.Exec("CREATE ROLE IF NOT EXISTS $1 LOGIN", anonRole)
+		rows, err := db.Query("SELECT FROM pg_catalog.pg_roles WHERE rolname = $1", anonRole)
 		if err != nil {
 			return (err)
+		}
+		if rows == nil || !rows.Next() {
+			_, err = db.Exec(fmt.Sprintf("CREATE ROLE %v LOGIN", anonRole))
+			if err != nil {
+				return (err)
+			}
+		}
+
+		// Grant usage on schemas
+		for _, schema := range strings.Split(cr.Spec.Schemas, ",") {
+			_, err = db.Exec(fmt.Sprintf("GRANT USAGE ON SCHEMA %v TO %v", strings.TrimSpace(schema), anonRole))
+			if err != nil {
+				return (err)
+			}
 		}
 
 		// Assign permissions on tables
 		for _, table := range cr.Spec.Tables {
-			_, err = db.Exec("GRANT ALL ON TABLE $1 TO $2", table, anonRole)
+			_, err = db.Exec(fmt.Sprintf("GRANT ALL ON TABLE %v TO %v", table, anonRole))
 			if err != nil {
 				return (err)
 			}
@@ -306,7 +328,8 @@ func createAnonRole(cr *postgrestv1.Postgrest) error {
 func cleanAnonRole(crName string) string {
 	cleanDots := strings.Replace(crName, ".", "_", -1)
 	cleanSpaces := strings.Replace(cleanDots, " ", "_", -1)
-	return strings.ToLower(cleanSpaces) + "_postgrest_role"
+	cleanDashes := strings.Replace(cleanSpaces, "-", "_", -1)
+	return strings.ToLower(cleanDashes) + "_postgrest_role"
 }
 
 func deleteAnonRole(cr *postgrestv1.Postgrest) error {
@@ -319,7 +342,13 @@ func deleteAnonRole(cr *postgrestv1.Postgrest) error {
 		}
 		defer db.Close()
 
-		_, err = db.Exec("DROP ROLE IF EXISTS $1", cr.Spec.AnonRole)
+		anonRole := cleanAnonRole(cr.Name)
+
+		_, err = db.Exec(fmt.Sprintf("DROP OWNED BY %v", anonRole))
+		if err != nil {
+			return (err)
+		}
+		_, err = db.Exec(fmt.Sprintf("DROP ROLE IF EXISTS %v", anonRole))
 		if err != nil {
 			return (err)
 		}
@@ -358,6 +387,26 @@ func (r *PostgrestReconciler) doFinalizerOperationsForPostgrest(cr *postgrestv1.
 func (r *PostgrestReconciler) deploymentForPostgrest(
 	postgrest *postgrestv1.Postgrest) (*appsv1.Deployment, error) {
 	ls := labelsForPostgrest(postgrest.Name)
+
+	envs := []corev1.EnvVar{
+		{
+			Name:  "PGRST_DB_URI",
+			Value: postgrest.Spec.DatabaseUri,
+		},
+		{
+			Name:  "PGRST_DB_SCHEMA",
+			Value: postgrest.Spec.Schemas,
+		},
+	}
+
+	var anonRole corev1.EnvVar
+	anonRole.Name = "PGRST_DB_ANON_ROLE"
+	if postgrest.Spec.AnonRole != nil {
+		anonRole.Value = *postgrest.Spec.AnonRole
+	} else {
+		anonRole.Value = cleanAnonRole(postgrest.Name)
+	}
+	envs = append(envs, anonRole)
 
 	dep := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
@@ -442,20 +491,7 @@ func (r *PostgrestReconciler) deploymentForPostgrest(
 							Name:          "postgres",
 						}},
 						*/
-						Env: []corev1.EnvVar{
-							{
-								Name:  "PGRST_DB_URI",
-								Value: postgrest.Spec.DatabaseUri,
-							},
-							{
-								Name:  "PGRST_DB_SCHEMA",
-								Value: postgrest.Spec.Schemas,
-							},
-							{
-								Name:  "PGRST_DB_ANON_ROLE",
-								Value: *postgrest.Spec.AnonRole,
-							},
-						},
+						Env:     envs,
 						Command: []string{"postgrest"},
 					}},
 				},
