@@ -26,14 +26,13 @@ import (
 
 	_ "github.com/lib/pq"
 
-	"k8s.io/apimachinery/pkg/api/meta"
-
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -49,8 +48,12 @@ const postgrestFinalizer = "postgrest.postgrest.digitalhub/finalizer"
 
 // Definitions to manage status conditions
 const (
+	// typeUnknown = "Unknown"
+
 	// When anon role is being created, before deployment
 	typeInitializing = "Initializing"
+
+	typeDeploying = "Deploying"
 
 	typeRunning = "Running"
 
@@ -111,8 +114,8 @@ func (r *PostgrestReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	}
 
 	// Let's just set the status as Unknown when no status are available
-	if postgrest.Status.Conditions == nil || len(postgrest.Status.Conditions) == 0 {
-		meta.SetStatusCondition(&postgrest.Status.Conditions, metav1.Condition{Type: typeRunning, Status: metav1.ConditionUnknown, Reason: "Reconciling", Message: "Starting reconciliation"})
+	if postgrest.Status.State == "" {
+		postgrest.Status.State = typeInitializing
 		if err = r.Status().Update(ctx, postgrest); err != nil {
 			log.Error(err, "Failed to update Postgrest status")
 			return ctrl.Result{}, err
@@ -125,6 +128,20 @@ func (r *PostgrestReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		// if we try to update it again in the following operations
 		if err := r.Get(ctx, req.NamespacedName, postgrest); err != nil {
 			log.Error(err, "Failed to re-fetch Postgrest")
+			return ctrl.Result{}, err
+		}
+	}
+
+	if postgrest.Status.State == typeInitializing {
+		err = createAnonRole(postgrest, ctx)
+		if err != nil {
+			log.Error(err, "Error while handling anonymous role")
+			return ctrl.Result{}, err
+		}
+
+		postgrest.Status.State = typeDeploying
+		if err = r.Status().Update(ctx, postgrest); err != nil {
+			log.Error(err, "Failed to update Postgrest status")
 			return ctrl.Result{}, err
 		}
 	}
@@ -153,14 +170,12 @@ func (r *PostgrestReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			log.Info("Performing Finalizer Operations for Postgrest before delete CR")
 
 			// Let's add here an status "Downgrade" to define that this resource begin its process to be terminated.
-			meta.SetStatusCondition(&postgrest.Status.Conditions, metav1.Condition{Type: typeDegraded,
-				Status: metav1.ConditionUnknown, Reason: "Finalizing",
-				Message: fmt.Sprintf("Performing finalizer operations for the custom resource: %s ", postgrest.Name)})
+			// *postgrest.Status.State = typeDegraded
 
-			if err := r.Status().Update(ctx, postgrest); err != nil {
-				log.Error(err, "Failed to update Postgrest status")
-				return ctrl.Result{}, err
-			}
+			// if err := r.Status().Update(ctx, postgrest); err != nil {
+			// 	log.Error(err, "Failed to update Postgrest status")
+			// 	return ctrl.Result{}, err
+			// }
 
 			// Perform all operations required before remove the finalizer and allow
 			// the Kubernetes API to remove the custom resource.
@@ -182,9 +197,7 @@ func (r *PostgrestReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 				return ctrl.Result{}, err
 			}
 
-			meta.SetStatusCondition(&postgrest.Status.Conditions, metav1.Condition{Type: typeDegraded,
-				Status: metav1.ConditionTrue, Reason: "Finalizing",
-				Message: fmt.Sprintf("Finalizer operations for custom resource %s name were successfully accomplished", postgrest.Name)})
+			postgrest.Status.State = typeDegraded
 
 			if err := r.Status().Update(ctx, postgrest); err != nil {
 				log.Error(err, "Failed to update Postgrest status")
@@ -210,29 +223,13 @@ func (r *PostgrestReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	err = r.Get(ctx, types.NamespacedName{Name: postgrest.Name, Namespace: postgrest.Namespace}, found)
 	if err != nil && apierrors.IsNotFound(err) {
 
-		meta.SetStatusCondition(&postgrest.Status.Conditions, metav1.Condition{Type: typeInitializing,
-			Status: metav1.ConditionFalse, Reason: "Initializing",
-			Message: "Creating anonymous role."})
-
-		if err := r.Status().Update(ctx, postgrest); err != nil {
-			log.Error(err, "Failed to update Postgrest status")
-			return ctrl.Result{}, err
-		}
-
-		err = createAnonRole(postgrest, ctx)
-		if err != nil {
-			log.Error(err, "Error while handling anonymous role")
-		}
-
 		// Define a new deployment
 		dep, err := r.deploymentForPostgrest(postgrest)
 		if err != nil {
 			log.Error(err, "Failed to define new Deployment resource for Postgrest")
 
 			// The following implementation will update the status
-			meta.SetStatusCondition(&postgrest.Status.Conditions, metav1.Condition{Type: typeError,
-				Status: metav1.ConditionFalse, Reason: "Reconciling",
-				Message: fmt.Sprintf("Failed to create Deployment for the custom resource (%s): (%s)", postgrest.Name, err)})
+			postgrest.Status.State = typeError
 
 			if err := r.Status().Update(ctx, postgrest); err != nil {
 				log.Error(err, "Failed to update Postgrest status")
@@ -250,6 +247,31 @@ func (r *PostgrestReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			return ctrl.Result{}, err
 		}
 
+		created := &appsv1.Deployment{}
+		err = r.Get(ctx, types.NamespacedName{Name: postgrest.Name, Namespace: postgrest.Namespace}, created)
+		if err == nil {
+			log.Info("Creating service")
+			service, err := r.serviceForPostgrest(postgrest)
+			if err != nil {
+				log.Error(err, "Service inizialition failed")
+			}
+			if err = r.Create(ctx, service); err != nil {
+				log.Error(err, "Service creation failed")
+				if err := r.Delete(ctx, created); err != nil {
+					log.Error(err, "Failed to clean up deployment")
+				}
+				return ctrl.Result{}, err
+			}
+			log.Info("Service created")
+		}
+
+		postgrest.Status.State = typeRunning
+
+		if err := r.Status().Update(ctx, postgrest); err != nil {
+			log.Error(err, "Failed to update Postgrest status")
+			return ctrl.Result{}, err
+		}
+
 		// Deployment created successfully
 		// We will requeue the reconciliation so that we can ensure the state
 		// and move forward for the next operations
@@ -261,9 +283,7 @@ func (r *PostgrestReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	}
 
 	// The following implementation will update the status
-	meta.SetStatusCondition(&postgrest.Status.Conditions, metav1.Condition{Type: typeRunning,
-		Status: metav1.ConditionTrue, Reason: "Reconciling",
-		Message: fmt.Sprintf("Deployment for custom resource (%s) created successfully", postgrest.Name)})
+	postgrest.Status.State = typeRunning
 
 	if err := r.Status().Update(ctx, postgrest); err != nil {
 		log.Error(err, "Failed to update Postgrest status")
@@ -273,7 +293,6 @@ func (r *PostgrestReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	return ctrl.Result{}, nil
 }
 
-// TODO where to call this?
 func createAnonRole(cr *postgrestv1.Postgrest, ctx context.Context) error {
 	// Connect to database
 	db, err := sql.Open("postgres", cr.Spec.DatabaseUri)
@@ -283,7 +302,7 @@ func createAnonRole(cr *postgrestv1.Postgrest, ctx context.Context) error {
 	defer db.Close()
 
 	// If anonymous role is defined, check if it exists
-	if cr.Spec.AnonRole != nil {
+	if cr.Spec.AnonRole != "" {
 		rows, err := db.Query("SELECT FROM pg_catalog.pg_roles WHERE rolname = $1", cr.Spec.AnonRole)
 		if err != nil {
 			return (err)
@@ -334,7 +353,7 @@ func cleanAnonRole(crName string) string {
 
 func deleteAnonRole(cr *postgrestv1.Postgrest) error {
 	// Only delete anonymous role if it was created by the controller
-	if cr.Spec.AnonRole == nil {
+	if cr.Spec.AnonRole == "" {
 		// Connect to database
 		db, err := sql.Open("postgres", cr.Spec.DatabaseUri)
 		if err != nil {
@@ -401,8 +420,8 @@ func (r *PostgrestReconciler) deploymentForPostgrest(
 
 	var anonRole corev1.EnvVar
 	anonRole.Name = "PGRST_DB_ANON_ROLE"
-	if postgrest.Spec.AnonRole != nil {
-		anonRole.Value = *postgrest.Spec.AnonRole
+	if postgrest.Spec.AnonRole != "" {
+		anonRole.Value = postgrest.Spec.AnonRole
 	} else {
 		anonRole.Value = cleanAnonRole(postgrest.Name)
 	}
@@ -485,12 +504,6 @@ func (r *PostgrestReconciler) deploymentForPostgrest(
 								},
 							},
 						},
-						/* TODO
-						Ports: []corev1.ContainerPort{{
-							ContainerPort: postgrest.Spec.ContainerPort,
-							Name:          "postgres",
-						}},
-						*/
 						Env:     envs,
 						Command: []string{"postgrest"},
 					}},
@@ -507,16 +520,38 @@ func (r *PostgrestReconciler) deploymentForPostgrest(
 	return dep, nil
 }
 
+func (r *PostgrestReconciler) serviceForPostgrest(postgrest *postgrestv1.Postgrest) (*corev1.Service, error) {
+	ls := labelsForPostgrest(postgrest.Name)
+
+	service := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      postgrest.Name,
+			Namespace: postgrest.Namespace,
+		},
+		Spec: corev1.ServiceSpec{
+			Selector: ls,
+			Type:     corev1.ServiceTypeNodePort,
+			Ports: []corev1.ServicePort{{
+				NodePort:   31247,
+				Protocol:   corev1.ProtocolTCP,
+				Port:       3000,
+				TargetPort: intstr.FromInt(3000),
+			}},
+		},
+	}
+
+	if err := ctrl.SetControllerReference(postgrest, service, r.Scheme); err != nil {
+		return nil, err
+	}
+
+	return service, nil
+}
+
 // labelsForPostgrest returns the labels for selecting the resources
 // More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/common-labels/
 func labelsForPostgrest(name string) map[string]string {
-	imageTag := strings.Split(image, ":")[1]
-
 	return map[string]string{"app.kubernetes.io/name": "Postgrest",
-		"app.kubernetes.io/instance":   name,
-		"app.kubernetes.io/version":    imageTag,
-		"app.kubernetes.io/part-of":    "postgrest-operator",
-		"app.kubernetes.io/created-by": "controller-manager",
+		"app.kubernetes.io/instance": name,
 	}
 }
 

@@ -39,7 +39,7 @@ type PostgrestSpec struct {
 	// +operator-sdk:csv:customresourcedefinitions:type=spec
 	// if specified: check it exists, assume its permissions are already correct
 	// if not specified: create with permissions as <clean CR name>_postgrest_role
-	AnonRole *string `json:"anonRole,omitempty"` // PGRST_DB_ANON_ROLE
+	AnonRole string `json:"anonRole,omitempty"` // PGRST_DB_ANON_ROLE
 
 	// +operator-sdk:csv:customresourcedefinitions:type=spec
 	Authentication Authentication `json:"authentication,omitempty"`
@@ -62,7 +62,8 @@ type AuthenticationJwt struct {
 // PostgrestStatus defines the observed state of Postgrest
 type PostgrestStatus struct {
 	// +operator-sdk:csv:customresourcedefinitions:type=status
-	Conditions []metav1.Condition `json:"conditions,omitempty" patchStrategy:"merge" patchMergeKey:"type" protobuf:"bytes,1,rep,name=conditions"`
+	State string `json:"state,omitempty" patchStrategy:"merge"`
+	//Conditions []metav1.Condition `json:"conditions,omitempty" patchStrategy:"merge" patchMergeKey:"type" protobuf:"bytes,1,rep,name=conditions"`
 }
 
 //+kubebuilder:object:root=true

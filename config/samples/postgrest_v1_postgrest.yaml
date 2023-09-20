@@ -5,9 +5,9 @@ metadata:
 spec:
   databaseUri: postgresql://postgres:postgres@192.168.1.129:5432/postgres?sslmode=disable
   schemas: operator
-  anonRole: anon
   tables:
     - operator.test
+  anonRole:
   readOnly: true
   authentication:
     basic:
