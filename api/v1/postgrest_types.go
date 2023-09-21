@@ -63,7 +63,6 @@ type AuthenticationJwt struct {
 type PostgrestStatus struct {
 	// +operator-sdk:csv:customresourcedefinitions:type=status
 	State string `json:"state,omitempty" patchStrategy:"merge"`
-	//Conditions []metav1.Condition `json:"conditions,omitempty" patchStrategy:"merge" patchMergeKey:"type" protobuf:"bytes,1,rep,name=conditions"`
 }
 
 //+kubebuilder:object:root=true

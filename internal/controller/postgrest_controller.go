@@ -48,11 +48,10 @@ const postgrestFinalizer = "postgrest.postgrest.digitalhub/finalizer"
 
 // Definitions to manage status conditions
 const (
-	// typeUnknown = "Unknown"
-
 	// When anon role is being created, before deployment
 	typeInitializing = "Initializing"
 
+	// Launch deployment and service
 	typeDeploying = "Deploying"
 
 	typeRunning = "Running"
@@ -113,7 +112,7 @@ func (r *PostgrestReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{}, err
 	}
 
-	// Let's just set the status as Unknown when no status are available
+	// If status is unknown, set Initializing
 	if postgrest.Status.State == "" {
 		postgrest.Status.State = typeInitializing
 		if err = r.Status().Update(ctx, postgrest); err != nil {
@@ -121,15 +120,7 @@ func (r *PostgrestReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			return ctrl.Result{}, err
 		}
 
-		// Let's re-fetch the Postgrest Custom Resource after update the status
-		// so that we have the latest state of the resource on the cluster and we will avoid
-		// raise the issue "the object has been modified, please apply
-		// your changes to the latest version and try again" which would re-trigger the reconciliation
-		// if we try to update it again in the following operations
-		if err := r.Get(ctx, req.NamespacedName, postgrest); err != nil {
-			log.Error(err, "Failed to re-fetch Postgrest")
-			return ctrl.Result{}, err
-		}
+		return ctrl.Result{Requeue: true}, nil
 	}
 
 	if postgrest.Status.State == typeInitializing {
@@ -144,22 +135,85 @@ func (r *PostgrestReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			log.Error(err, "Failed to update Postgrest status")
 			return ctrl.Result{}, err
 		}
+
+		return ctrl.Result{Requeue: true}, nil
 	}
 
-	// Let's add a finalizer. Then, we can define some operations which should
-	// occurs before the custom resource to be deleted.
-	// More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/finalizers
-	if !controllerutil.ContainsFinalizer(postgrest, postgrestFinalizer) {
-		log.Info("Adding finalizer for Postgrest")
-		if ok := controllerutil.AddFinalizer(postgrest, postgrestFinalizer); !ok {
-			log.Error(err, "Failed to add finalizer into the custom resource")
-			return ctrl.Result{Requeue: true}, nil
+	if postgrest.Status.State == typeDeploying {
+		// Add finalizer
+		if !controllerutil.ContainsFinalizer(postgrest, postgrestFinalizer) {
+			log.Info("Adding finalizer for Postgrest")
+			if ok := controllerutil.AddFinalizer(postgrest, postgrestFinalizer); !ok {
+				log.Error(err, "Failed to add finalizer into the custom resource")
+				return ctrl.Result{Requeue: true}, nil
+			}
+
+			if err = r.Update(ctx, postgrest); err != nil {
+				log.Error(err, "Failed to update custom resource to add finalizer")
+				return ctrl.Result{}, err
+			}
+
+			if err := r.Get(ctx, req.NamespacedName, postgrest); err != nil {
+				log.Error(err, "Failed to re-fetch Postgrest")
+				return ctrl.Result{}, err
+			}
 		}
 
-		if err = r.Update(ctx, postgrest); err != nil {
-			log.Error(err, "Failed to update custom resource to add finalizer")
+		// Check if the deployment already exists, if not create a new one
+		found := &appsv1.Deployment{}
+		err = r.Get(ctx, types.NamespacedName{Name: postgrest.Name, Namespace: postgrest.Namespace}, found)
+		if err != nil && apierrors.IsNotFound(err) {
+
+			// Define a new deployment
+			dep, err := r.deploymentForPostgrest(postgrest)
+			if err != nil {
+				log.Error(err, "Failed to define new Deployment resource for Postgrest")
+
+				postgrest.Status.State = typeError
+
+				if err := r.Status().Update(ctx, postgrest); err != nil {
+					log.Error(err, "Failed to update Postgrest status")
+					return ctrl.Result{}, err
+				}
+
+				return ctrl.Result{}, err
+			}
+
+			log.Info("Creating a new Deployment",
+				"Deployment.Namespace", dep.Namespace, "Deployment.Name", dep.Name)
+			if err = r.Create(ctx, dep); err != nil {
+				log.Error(err, "Failed to create new Deployment",
+					"Deployment.Namespace", dep.Namespace, "Deployment.Name", dep.Name)
+				return ctrl.Result{}, err
+			}
+		} else if err != nil {
+			log.Error(err, "Failed to get Deployment")
+			// Return error for reconciliation to be re-trigged
 			return ctrl.Result{}, err
 		}
+		existingService := &corev1.Service{}
+		err = r.Get(ctx, types.NamespacedName{Name: postgrest.Name, Namespace: postgrest.Namespace}, existingService)
+		if err != nil && apierrors.IsNotFound(err) {
+			service, err := r.serviceForPostgrest(postgrest)
+			if err != nil {
+				log.Error(err, "Service inizialition failed")
+				return ctrl.Result{}, err
+			}
+			if err = r.Create(ctx, service); err != nil {
+				log.Error(err, "Service creation failed")
+				return ctrl.Result{}, err
+			}
+		}
+
+		postgrest.Status.State = typeRunning
+		if err = r.Status().Update(ctx, postgrest); err != nil {
+			log.Error(err, "Failed to update Postgrest status")
+			return ctrl.Result{}, err
+		}
+
+		log.Info("Deployment and service created successfully")
+		// Deployment created successfully
+		return ctrl.Result{RequeueAfter: time.Minute}, nil
 	}
 
 	// Check if the Postgrest instance is marked to be deleted, which is
@@ -169,24 +223,12 @@ func (r *PostgrestReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		if controllerutil.ContainsFinalizer(postgrest, postgrestFinalizer) {
 			log.Info("Performing Finalizer Operations for Postgrest before delete CR")
 
-			// Let's add here an status "Downgrade" to define that this resource begin its process to be terminated.
-			// *postgrest.Status.State = typeDegraded
-
-			// if err := r.Status().Update(ctx, postgrest); err != nil {
-			// 	log.Error(err, "Failed to update Postgrest status")
-			// 	return ctrl.Result{}, err
-			// }
-
 			// Perform all operations required before remove the finalizer and allow
 			// the Kubernetes API to remove the custom resource.
 			if err := r.doFinalizerOperationsForPostgrest(postgrest); err != nil {
 				log.Error(err, "Finalizer operations failed")
-				// return ctrl.Result{Requeue: true}, nil
+				return ctrl.Result{Requeue: true}, nil
 			}
-
-			// TODO(user): If you add operations to the doFinalizerOperationsForPostgrest method
-			// then you need to ensure that all worked fine before deleting and updating the Downgrade status
-			// otherwise, you should requeue here.
 
 			// Re-fetch the Postgrest Custom Resource before update the status
 			// so that we have the latest state of the resource on the cluster and we will avoid
@@ -218,76 +260,59 @@ func (r *PostgrestReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{}, nil
 	}
 
-	// Check if the deployment already exists, if not create a new one
-	found := &appsv1.Deployment{}
-	err = r.Get(ctx, types.NamespacedName{Name: postgrest.Name, Namespace: postgrest.Namespace}, found)
-	if err != nil && apierrors.IsNotFound(err) {
-
-		// Define a new deployment
-		dep, err := r.deploymentForPostgrest(postgrest)
+	if postgrest.Status.State == typeRunning {
+		dep := &appsv1.Deployment{}
+		err = r.Get(ctx, types.NamespacedName{Name: postgrest.Name, Namespace: postgrest.Namespace}, dep)
 		if err != nil {
-			log.Error(err, "Failed to define new Deployment resource for Postgrest")
+			log.Error(err, "Error while retrieving deployment")
+			return ctrl.Result{}, err
+		}
 
-			// The following implementation will update the status
-			postgrest.Status.State = typeError
-
-			if err := r.Status().Update(ctx, postgrest); err != nil {
+		// Deployment ready
+		if dep.Status.ReadyReplicas > 0 {
+			if err = r.Status().Update(ctx, postgrest); err != nil {
 				log.Error(err, "Failed to update Postgrest status")
 				return ctrl.Result{}, err
 			}
 
-			return ctrl.Result{}, err
+			return ctrl.Result{}, nil
 		}
 
-		log.Info("Creating a new Deployment",
-			"Deployment.Namespace", dep.Namespace, "Deployment.Name", dep.Name)
-		if err = r.Create(ctx, dep); err != nil {
-			log.Error(err, "Failed to create new Deployment",
-				"Deployment.Namespace", dep.Namespace, "Deployment.Name", dep.Name)
-			return ctrl.Result{}, err
-		}
+		// Wait up to 3 minutes for deployment to become ready
+		if dep.CreationTimestamp.Add(3 * time.Minute).Before(time.Now()) {
+			log.Info("Deployment still not ready, setting CR state to Error")
+			postgrest.Status.State = typeError
 
-		created := &appsv1.Deployment{}
-		err = r.Get(ctx, types.NamespacedName{Name: postgrest.Name, Namespace: postgrest.Namespace}, created)
-		if err == nil {
-			log.Info("Creating service")
-			service, err := r.serviceForPostgrest(postgrest)
-			if err != nil {
-				log.Error(err, "Service inizialition failed")
-			}
-			if err = r.Create(ctx, service); err != nil {
-				log.Error(err, "Service creation failed")
-				if err := r.Delete(ctx, created); err != nil {
-					log.Error(err, "Failed to clean up deployment")
-				}
+			if err = r.Status().Update(ctx, postgrest); err != nil {
+				log.Error(err, "Failed to update Postgrest status")
 				return ctrl.Result{}, err
 			}
-			log.Info("Service created")
+			return ctrl.Result{Requeue: true}, nil
 		}
 
-		postgrest.Status.State = typeRunning
-
-		if err := r.Status().Update(ctx, postgrest); err != nil {
-			log.Error(err, "Failed to update Postgrest status")
-			return ctrl.Result{}, err
-		}
-
-		// Deployment created successfully
-		// We will requeue the reconciliation so that we can ensure the state
-		// and move forward for the next operations
 		return ctrl.Result{RequeueAfter: time.Minute}, nil
-	} else if err != nil {
-		log.Error(err, "Failed to get Deployment")
-		// Let's return the error for the reconciliation be re-trigged again
-		return ctrl.Result{}, err
 	}
 
-	// The following implementation will update the status
-	postgrest.Status.State = typeRunning
+	if postgrest.Status.State == typeError {
+		// Delete service
+		service := &corev1.Service{}
+		err = r.Get(ctx, types.NamespacedName{Name: postgrest.Name, Namespace: postgrest.Namespace}, service)
+		if err == nil {
+			if err := r.Delete(ctx, service); err != nil {
+				log.Error(err, "Failed to clean up service")
+			}
+		}
 
-	if err := r.Status().Update(ctx, postgrest); err != nil {
-		log.Error(err, "Failed to update Postgrest status")
-		return ctrl.Result{}, err
+		// Delete deployment
+		deployment := &appsv1.Deployment{}
+		err = r.Get(ctx, types.NamespacedName{Name: postgrest.Name, Namespace: postgrest.Namespace}, deployment)
+		if err == nil {
+			if err := r.Delete(ctx, deployment); err != nil {
+				log.Error(err, "Failed to clean up deployment")
+			}
+		}
+
+		return ctrl.Result{}, nil
 	}
 
 	return ctrl.Result{}, nil
@@ -364,7 +389,7 @@ func deleteAnonRole(cr *postgrestv1.Postgrest) error {
 		anonRole := cleanAnonRole(cr.Name)
 
 		_, err = db.Exec(fmt.Sprintf("DROP OWNED BY %v", anonRole))
-		if err != nil {
+		if err != nil && err.Error() != fmt.Sprintf("pq: role \"%v\" does not exist", strings.ToLower(anonRole)) {
 			return (err)
 		}
 		_, err = db.Exec(fmt.Sprintf("DROP ROLE IF EXISTS %v", anonRole))
@@ -378,10 +403,6 @@ func deleteAnonRole(cr *postgrestv1.Postgrest) error {
 
 // Will perform the required operations before delete the CR.
 func (r *PostgrestReconciler) doFinalizerOperationsForPostgrest(cr *postgrestv1.Postgrest) error {
-	// TODO(user): Add the cleanup steps that the operator
-	// needs to do before the CR can be deleted. Examples
-	// of finalizers include performing backups and deleting
-	// resources that are not owned by this CR, like a PVC.
 	err := deleteAnonRole(cr)
 	if err != nil {
 		return err
