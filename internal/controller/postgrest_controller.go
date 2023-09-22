@@ -114,6 +114,7 @@ func (r *PostgrestReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 	// If status is unknown, set Initializing
 	if postgrest.Status.State == "" {
+		log.Info("State unspecified, updating to initializing")
 		postgrest.Status.State = typeInitializing
 		if err = r.Status().Update(ctx, postgrest); err != nil {
 			log.Error(err, "Failed to update Postgrest status")
@@ -124,6 +125,7 @@ func (r *PostgrestReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	}
 
 	if postgrest.Status.State == typeInitializing {
+		log.Info("Creating anonymous role")
 		err = createAnonRole(postgrest, ctx)
 		if err != nil {
 			log.Error(err, "Error while handling anonymous role")
@@ -140,6 +142,8 @@ func (r *PostgrestReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	}
 
 	if postgrest.Status.State == typeDeploying {
+		log.Info("Deploying and creating service")
+
 		// Add finalizer
 		if !controllerutil.ContainsFinalizer(postgrest, postgrestFinalizer) {
 			log.Info("Adding finalizer for Postgrest")
@@ -187,10 +191,12 @@ func (r *PostgrestReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 				return ctrl.Result{}, err
 			}
 		} else if err != nil {
-			log.Error(err, "Failed to get Deployment")
+			log.Error(err, "Failed to get deployment")
 			// Return error for reconciliation to be re-trigged
 			return ctrl.Result{}, err
 		}
+
+		// Create service
 		existingService := &corev1.Service{}
 		err = r.Get(ctx, types.NamespacedName{Name: postgrest.Name, Namespace: postgrest.Namespace}, existingService)
 		if err != nil && apierrors.IsNotFound(err) {
@@ -203,6 +209,10 @@ func (r *PostgrestReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 				log.Error(err, "Service creation failed")
 				return ctrl.Result{}, err
 			}
+		} else if err != nil {
+			log.Error(err, "Failed to get service")
+			// Return error for reconciliation to be re-trigged
+			return ctrl.Result{}, err
 		}
 
 		postgrest.Status.State = typeRunning
@@ -220,6 +230,7 @@ func (r *PostgrestReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	// indicated by the deletion timestamp being set.
 	isPostgrestMarkedToBeDeleted := postgrest.GetDeletionTimestamp() != nil
 	if isPostgrestMarkedToBeDeleted {
+		log.Info("Resource marked to be deleted")
 		if controllerutil.ContainsFinalizer(postgrest, postgrestFinalizer) {
 			log.Info("Performing Finalizer Operations for Postgrest before delete CR")
 
@@ -270,6 +281,7 @@ func (r *PostgrestReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 		// Deployment ready
 		if dep.Status.ReadyReplicas > 0 {
+			log.Info("Deployment is ready")
 			if err = r.Status().Update(ctx, postgrest); err != nil {
 				log.Error(err, "Failed to update Postgrest status")
 				return ctrl.Result{}, err
@@ -280,7 +292,7 @@ func (r *PostgrestReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 		// Wait up to 3 minutes for deployment to become ready
 		if dep.CreationTimestamp.Add(3 * time.Minute).Before(time.Now()) {
-			log.Info("Deployment still not ready, setting CR state to Error")
+			log.Info("Deployment still not ready, setting state to Error")
 			postgrest.Status.State = typeError
 
 			if err = r.Status().Update(ctx, postgrest); err != nil {
@@ -294,6 +306,8 @@ func (r *PostgrestReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	}
 
 	if postgrest.Status.State == typeError {
+		log.Info("Cleaning up deployment and service")
+
 		// Delete service
 		service := &corev1.Service{}
 		err = r.Get(ctx, types.NamespacedName{Name: postgrest.Name, Namespace: postgrest.Namespace}, service)
@@ -301,6 +315,10 @@ func (r *PostgrestReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			if err := r.Delete(ctx, service); err != nil {
 				log.Error(err, "Failed to clean up service")
 			}
+		} else if err != nil && !apierrors.IsNotFound(err) {
+			log.Error(err, "Failed to get service")
+			// Return error for reconciliation to be re-trigged
+			return ctrl.Result{}, err
 		}
 
 		// Delete deployment
@@ -310,6 +328,10 @@ func (r *PostgrestReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			if err := r.Delete(ctx, deployment); err != nil {
 				log.Error(err, "Failed to clean up deployment")
 			}
+		} else if err != nil && !apierrors.IsNotFound(err) {
+			log.Error(err, "Failed to get deployment")
+			// Return error for reconciliation to be re-trigged
+			return ctrl.Result{}, err
 		}
 
 		return ctrl.Result{}, nil
@@ -357,9 +379,14 @@ func createAnonRole(cr *postgrestv1.Postgrest, ctx context.Context) error {
 			}
 		}
 
+		var grant string = "SELECT"
+		if cr.Spec.AllowWrite {
+			grant = "SELECT, INSERT, UPDATE, DELETE"
+		}
+
 		// Assign permissions on tables
 		for _, table := range cr.Spec.Tables {
-			_, err = db.Exec(fmt.Sprintf("GRANT ALL ON TABLE %v TO %v", table, anonRole))
+			_, err = db.Exec(fmt.Sprintf("GRANT %v ON TABLE %v TO %v", grant, table, anonRole))
 			if err != nil {
 				return (err)
 			}

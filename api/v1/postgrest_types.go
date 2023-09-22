@@ -34,7 +34,7 @@ type PostgrestSpec struct {
 	Tables []string `json:"tables,omitempty"`
 
 	// +operator-sdk:csv:customresourcedefinitions:type=spec
-	ReadOnly bool `json:"readOnly,omitempty"`
+	AllowWrite bool `json:"allowWrite,omitempty"`
 
 	// +operator-sdk:csv:customresourcedefinitions:type=spec
 	// if specified: check it exists, assume its permissions are already correct

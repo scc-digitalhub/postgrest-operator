@@ -8,7 +8,7 @@ spec:
   tables:
     - operator.test
   anonRole:
-  readOnly: true
+  allowWrite: true
   authentication:
     basic:
       user: postgres
