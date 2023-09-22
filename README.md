@@ -1,5 +1,13 @@
 # postgrest-operator
-// TODO(user): Add simple overview of use/purpose
+Install operator and CRD:
+```sh
+kubectl apply -f deployment.yaml
+```
+
+Launch CR:
+```sh
+kubectl apply -f config/samples/postgrest_v1_postgrest.yaml
+```
 
 ## Description
 // TODO(user): An in-depth paragraph about your project and overview of use
