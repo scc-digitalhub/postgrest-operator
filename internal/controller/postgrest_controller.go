@@ -21,6 +21,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -42,7 +43,9 @@ import (
 	postgrestv1 "github.com/scc-digitalhub/postgrest-operator/api/v1"
 )
 
-const image = "postgrest/postgrest:v11.2.0"
+const postgrestImage = "POSTGREST_IMAGE"
+const postgrestImageTag = "POSTGREST_IMAGE_TAG"
+const postgrestServiceType = "POSTGREST_SERVICE_TYPE"
 
 const postgrestFinalizer = "postgrest.postgrest.digitalhub/finalizer"
 
@@ -290,8 +293,8 @@ func (r *PostgrestReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			return ctrl.Result{}, nil
 		}
 
-		// Wait up to 3 minutes for deployment to become ready
-		if dep.CreationTimestamp.Add(3 * time.Minute).Before(time.Now()) {
+		// Wait up to 15 minutes for deployment to become ready
+		if dep.CreationTimestamp.Add(15 * time.Minute).Before(time.Now()) {
 			log.Info("Deployment still not ready, setting state to Error")
 			postgrest.Status.State = typeError
 
@@ -453,12 +456,21 @@ func (r *PostgrestReconciler) doFinalizerOperationsForPostgrest(cr *postgrestv1.
 // deploymentForPostgrest returns a Postgrest Deployment object
 func (r *PostgrestReconciler) deploymentForPostgrest(
 	postgrest *postgrestv1.Postgrest) (*appsv1.Deployment, error) {
-	ls := labelsForPostgrest(postgrest.Name)
+	image, found := os.LookupEnv(postgrestImage)
+	if !found {
+		image = "postgrest/postgrest"
+	}
+	tag, found := os.LookupEnv(postgrestImageTag)
+	if !found {
+		tag = "latest"
+	}
+
+	ls := labelsForPostgrest(postgrest.Name, tag)
 
 	envs := []corev1.EnvVar{
 		{
 			Name:  "PGRST_DB_URI",
-			Value: postgrest.Spec.DatabaseUri,
+			Value: postgrest.Spec.DatabaseUri,//TODO cambiare in ValueFrom per leggere dal secret
 		},
 		{
 			Name:  "PGRST_DB_SCHEMA",
@@ -477,7 +489,7 @@ func (r *PostgrestReconciler) deploymentForPostgrest(
 
 	dep := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      postgrest.Name,
+			Name:      strings.Join([]string{"postgrest", postgrest.Name}, "-"),
 			Namespace: postgrest.Namespace,
 		},
 		Spec: appsv1.DeploymentSpec{
@@ -527,7 +539,7 @@ func (r *PostgrestReconciler) deploymentForPostgrest(
 						},
 					},
 					Containers: []corev1.Container{{
-						Image:           image,
+						Image:           strings.Join([]string{image, tag}, ":"),
 						Name:            "postgrest",
 						ImagePullPolicy: corev1.PullIfNotPresent,
 						// Ensure restrictive context for the container
@@ -569,18 +581,30 @@ func (r *PostgrestReconciler) deploymentForPostgrest(
 }
 
 func (r *PostgrestReconciler) serviceForPostgrest(postgrest *postgrestv1.Postgrest) (*corev1.Service, error) {
-	ls := labelsForPostgrest(postgrest.Name)
+	tag, found := os.LookupEnv(postgrestImageTag)
+	if !found {
+		tag = "latest"
+	}
+
+	var corev1ServiceType corev1.ServiceType
+	serviceType, found := os.LookupEnv(postgrestServiceType)
+	if found && strings.EqualFold(serviceType, "ClusterIP") {
+		corev1ServiceType = corev1.ServiceTypeClusterIP
+	} else {
+		corev1ServiceType = corev1.ServiceTypeNodePort
+	} //TODO più strict
+
+	ls := labelsForPostgrest(postgrest.Name, tag)
 
 	service := &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      postgrest.Name,
+			Name:      strings.Join([]string{"postgrest", postgrest.Name}, "-"),
 			Namespace: postgrest.Namespace,
 		},
 		Spec: corev1.ServiceSpec{
 			Selector: ls,
-			Type:     corev1.ServiceTypeNodePort,
+			Type:     corev1ServiceType,
 			Ports: []corev1.ServicePort{{
-				NodePort:   31247,
 				Protocol:   corev1.ProtocolTCP,
 				Port:       3000,
 				TargetPort: intstr.FromInt(3000),
@@ -597,9 +621,12 @@ func (r *PostgrestReconciler) serviceForPostgrest(postgrest *postgrestv1.Postgre
 
 // labelsForPostgrest returns the labels for selecting the resources
 // More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/common-labels/
-func labelsForPostgrest(name string) map[string]string {
+func labelsForPostgrest(name string, version string) map[string]string {
 	return map[string]string{"app.kubernetes.io/name": "Postgrest",
-		"app.kubernetes.io/instance": name,
+		"app.kubernetes.io/instance":   name,
+		"app.kubernetes.io/managed-by": "postgrest-operator",
+		"app.kubernetes.io/part-of":    "postgrest",
+		"app.kubernetes.io/version":    version,
 	}
 }
 
