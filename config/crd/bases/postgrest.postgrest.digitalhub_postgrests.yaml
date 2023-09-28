@@ -57,8 +57,6 @@ spec:
                         type: string
                     type: object
                 type: object
-              databaseUri:
-                type: string
               schemas:
                 type: string
               tables:

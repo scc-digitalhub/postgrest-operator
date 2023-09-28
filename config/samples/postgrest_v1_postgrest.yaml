@@ -1,9 +1,9 @@
 apiVersion: postgrest.postgrest.digitalhub/v1
 kind: Postgrest
 metadata:
-  name: postgrest-sample
+  name: cr2
+  namespace: postgrest-operator-system
 spec:
-  databaseUri: postgresql://postgres:postgres@192.168.1.129:5432/postgres?sslmode=disable
   schemas: operator
   tables:
     - operator.test

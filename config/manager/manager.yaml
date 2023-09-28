@@ -72,6 +72,9 @@ spec:
         - --leader-elect
         image: controller:latest
         name: manager
+        env:
+        - name: WATCH_NAMESPACE
+          value: "ns1,ns2"
         securityContext:
           allowPrivilegeEscalation: false
           capabilities:

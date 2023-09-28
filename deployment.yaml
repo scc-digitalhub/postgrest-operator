@@ -69,8 +69,6 @@ spec:
                         type: string
                     type: object
                 type: object
-              databaseUri:
-                type: string
               schemas:
                 type: string
               tables:
@@ -149,10 +147,11 @@ rules:
   - patch
 ---
 apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
+kind: Role
 metadata:
   creationTimestamp: null
   name: postgrest-operator-manager-role
+  namespace: postgrest-operator-system
 rules:
 - apiGroups:
   - apps
@@ -184,15 +183,27 @@ rules:
 - apiGroups:
   - ""
   resources:
-  - services
+  - secrets
   verbs:
+  - create
+  - delete
   - get
   - list
-  - watch
-  - create
-  - update
   - patch
+  - update
+  - watch
+- apiGroups:
+  - ""
+  resources:
+  - services
+  verbs:
+  - create
   - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
 - apiGroups:
   - postgrest.postgrest.digitalhub
   resources:
@@ -284,19 +295,20 @@ subjects:
   namespace: postgrest-operator-system
 ---
 apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
+kind: RoleBinding
 metadata:
   labels:
     app.kubernetes.io/component: rbac
     app.kubernetes.io/created-by: postgrest-operator
     app.kubernetes.io/instance: manager-rolebinding
     app.kubernetes.io/managed-by: kustomize
-    app.kubernetes.io/name: clusterrolebinding
+    app.kubernetes.io/name: rolebinding
     app.kubernetes.io/part-of: postgrest-operator
   name: postgrest-operator-manager-rolebinding
+  namespace: postgrest-operator-system
 roleRef:
   apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
+  kind: Role
   name: postgrest-operator-manager-role
 subjects:
 - kind: ServiceAccount
@@ -416,6 +428,17 @@ spec:
         - --leader-elect
         command:
         - /manager
+        env:
+        - name: WATCH_NAMESPACE
+          value: postgrest-operator-system
+        - name: POSTGREST_IMAGE
+          value: postgrest/postgrest
+        - name: POSTGREST_IMAGE_TAG
+          value: v11.1.0
+        - name: POSTGREST_SERVICE_TYPE
+          value: ClusterIP
+        - name: POSTGREST_DATABASE_URI
+          value: postgresql://postgres:postgres@192.168.178.120:5432/postgres?sslmode=disable
         image: postgrest.digitalhub/postgrest-operator:0.0.1
         livenessProbe:
           httpGet:
