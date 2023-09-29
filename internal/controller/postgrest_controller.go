@@ -566,6 +566,7 @@ func (r *PostgrestReconciler) deploymentForPostgrest(
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      formatResourceName(postgrest.Name),
 			Namespace: postgrest.Namespace,
+			Labels: ls,
 		},
 		Spec: appsv1.DeploymentSpec{
 			Selector: &metav1.LabelSelector{
@@ -677,6 +678,7 @@ func (r *PostgrestReconciler) serviceForPostgrest(postgrest *postgrestv1.Postgre
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      formatResourceName(postgrest.Name),
 			Namespace: postgrest.Namespace,
+			Labels: ls,
 		},
 		Spec: corev1.ServiceSpec{
 			Selector: ls,
