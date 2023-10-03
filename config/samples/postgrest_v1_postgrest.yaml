@@ -9,9 +9,3 @@ spec:
     - operator.test
   anonRole:
   allowWrite: true
-  authentication:
-    basic:
-      user: postgres
-      password: postgres123
-    jwt:
-      secret: test123

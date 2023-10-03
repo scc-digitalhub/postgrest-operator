@@ -37,23 +37,6 @@ type PostgrestSpec struct {
 	// if specified: check it exists, assume its permissions are already correct
 	// if not specified: create with permissions as <clean CR name>_postgrest_role
 	AnonRole string `json:"anonRole,omitempty"` // PGRST_DB_ANON_ROLE
-
-	// +operator-sdk:csv:customresourcedefinitions:type=spec
-	Authentication Authentication `json:"authentication,omitempty"`
-}
-
-type Authentication struct {
-	Basic AuthenticationBasic `json:"basic,omitempty"`
-	Jwt   AuthenticationJwt   `json:"jwt,omitempty"`
-}
-
-type AuthenticationBasic struct {
-	User     string `json:"user,omitempty"`
-	Password string `json:"password,omitempty"`
-}
-
-type AuthenticationJwt struct {
-	Secret string `json:"secret,omitempty"`
 }
 
 // PostgrestStatus defines the observed state of Postgrest

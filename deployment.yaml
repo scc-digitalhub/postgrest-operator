@@ -54,21 +54,6 @@ spec:
                   are already correct if not specified: create with permissions as
                   <clean CR name>_postgrest_role'
                 type: string
-              authentication:
-                properties:
-                  basic:
-                    properties:
-                      password:
-                        type: string
-                      user:
-                        type: string
-                    type: object
-                  jwt:
-                    properties:
-                      secret:
-                        type: string
-                    type: object
-                type: object
               schemas:
                 type: string
               tables:
