@@ -48,7 +48,7 @@ const postgrestImageTag = "POSTGREST_IMAGE_TAG"
 const postgrestServiceType = "POSTGREST_SERVICE_TYPE"
 const postgrestDatabaseUri = "POSTGREST_DATABASE_URI"
 
-const postgrestFinalizer = "postgrest.postgrest.digitalhub/finalizer"
+const postgrestFinalizer = "postgrest.postgrest.digitalhub/finalizer" //TODO valutare nome
 
 // Definitions to manage status conditions
 const (
@@ -114,7 +114,7 @@ func (r *PostgrestReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		if apierrors.IsNotFound(err) {
 			// If the custom resource is not found then, it usually means that it was deleted or not created
 			// In this way, we will stop the reconciliation
-			log.Info("postgrest resource not found. Ignoring since object must be deleted")
+			log.Info("Postgrest resource not found. Ignoring since object must be deleted")
 			return ctrl.Result{}, nil
 		}
 		// Error reading the object - requeue the request.
@@ -401,6 +401,8 @@ func (r *PostgrestReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 }
 
 func createAnonRole(cr *postgrestv1.Postgrest, ctx context.Context) error {
+	log := log.FromContext(ctx)
+
 	// Get connection string from env
 	databaseUri, found := os.LookupEnv(postgrestDatabaseUri)
 	if !found {
@@ -415,12 +417,17 @@ func createAnonRole(cr *postgrestv1.Postgrest, ctx context.Context) error {
 
 	// If anonymous role is defined, check if it exists
 	if cr.Spec.AnonRole != "" {
+		if cr.Spec.Tables != nil {
+			return errors.New("Inconsistent configuration: either specify anonymous role or a list of tables")
+		}
+
+		log.Info(fmt.Sprintf("Anonymous role %v specified, its permissions will be used", cr.Spec.AnonRole))
 		rows, err := db.Query("SELECT FROM pg_catalog.pg_roles WHERE rolname = $1", cr.Spec.AnonRole)
 		if err != nil {
 			return (err)
 		}
 		if rows == nil || !rows.Next() {
-			return errors.New("declared anonymous role does not exist")
+			return errors.New("Declared anonymous role does not exist, either manually create it or remove it to use autocreation")
 		}
 	} else {
 		// Create anonymous role
@@ -533,6 +540,7 @@ func (r *PostgrestReconciler) deploymentForPostgrest(
 	}
 
 	ls := labelsForPostgrest(postgrest.Name, tag)
+	selectors := selectorsForPostgrest(postgrest.Name)
 
 	optional := false
 
@@ -570,7 +578,7 @@ func (r *PostgrestReconciler) deploymentForPostgrest(
 		},
 		Spec: appsv1.DeploymentSpec{
 			Selector: &metav1.LabelSelector{
-				MatchLabels: ls,
+				MatchLabels: selectors,
 			},
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
@@ -673,6 +681,7 @@ func (r *PostgrestReconciler) serviceForPostgrest(postgrest *postgrestv1.Postgre
 	}
 
 	ls := labelsForPostgrest(postgrest.Name, tag)
+	selectors := selectorsForPostgrest(postgrest.Name)
 
 	service := &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{
@@ -681,7 +690,7 @@ func (r *PostgrestReconciler) serviceForPostgrest(postgrest *postgrestv1.Postgre
 			Labels: ls,
 		},
 		Spec: corev1.ServiceSpec{
-			Selector: ls,
+			Selector: selectors,
 			Type:     corev1ServiceType,
 			Ports: []corev1.ServicePort{{
 				Protocol:   corev1.ProtocolTCP,
@@ -728,11 +737,16 @@ func (r *PostgrestReconciler) secretForPostgrest(postgrest *postgrestv1.Postgres
 // labelsForPostgrest returns the labels for selecting the resources
 // More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/common-labels/
 func labelsForPostgrest(name string, version string) map[string]string {
+	selectors := selectorsForPostgrest(name)
+	selectors["app.kubernetes.io/version"] = version
+	selectors["app.kubernetes.io/part-of"] = "postgrest"
+	return selectors
+}
+
+func selectorsForPostgrest(name string) map[string]string {
 	return map[string]string{"app.kubernetes.io/name": "Postgrest",
 		"app.kubernetes.io/instance":   name,
 		"app.kubernetes.io/managed-by": "postgrest-operator",
-		"app.kubernetes.io/part-of":    "postgrest",
-		"app.kubernetes.io/version":    version,
 	}
 }
 

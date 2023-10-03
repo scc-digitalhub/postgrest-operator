@@ -80,7 +80,7 @@ func main() {
 		Port:                   9443,
 		HealthProbeBindAddress: probeAddr,
 		LeaderElection:         enableLeaderElection,
-		LeaderElectionID:       "5b2ab3e0.postgrest.digitalhub",
+		LeaderElectionID:       "5b2ab3e0.postgrest.digitalhub", //TODO cambiare in leader.<group>
 		Namespace:              watchNamespace, // namespaced-scope when the value is not an empty string
 	}
 

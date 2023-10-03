@@ -26,7 +26,7 @@ import (
 
 var (
 	// GroupVersion is group version used to register these objects
-	GroupVersion = schema.GroupVersion{Group: "postgrest.postgrest.digitalhub", Version: "v1"}
+	GroupVersion = schema.GroupVersion{Group: "postgrest.postgrest.digitalhub", Version: "v1"} //TODO cambiare in <group>
 
 	// SchemeBuilder is used to add go types to the GroupVersionKind scheme
 	SchemeBuilder = &scheme.Builder{GroupVersion: GroupVersion}
