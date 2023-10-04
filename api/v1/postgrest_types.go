@@ -31,7 +31,7 @@ type PostgrestSpec struct {
 	Tables []string `json:"tables,omitempty"`
 
 	// +operator-sdk:csv:customresourcedefinitions:type=spec
-	AllowWrite bool `json:"allowWrite,omitempty"`
+	Grants string `json:"grants,omitempty"`
 
 	// +operator-sdk:csv:customresourcedefinitions:type=spec
 	// if specified: check it exists, assume its permissions are already correct

@@ -452,8 +452,8 @@ func createAnonRole(cr *postgrestv1.Postgrest, ctx context.Context) error {
 		}
 
 		var grant string = "SELECT"
-		if cr.Spec.AllowWrite {
-			grant = "SELECT, INSERT, UPDATE, DELETE"
+		if cr.Spec.Grants != "" {
+			grant = cr.Spec.Grants
 		}
 
 		// Assign permissions on tables

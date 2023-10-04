@@ -8,4 +8,4 @@ spec:
   tables:
     - operator.test
   anonRole:
-  allowWrite: true
+  grants: SELECT, UPDATE, INSERT, DELETE

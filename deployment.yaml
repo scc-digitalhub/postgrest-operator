@@ -47,12 +47,12 @@ spec:
           spec:
             description: PostgrestSpec defines the desired state of Postgrest
             properties:
-              allowWrite:
-                type: boolean
               anonRole:
                 description: 'if specified: check it exists, assume its permissions
                   are already correct if not specified: create with permissions as
                   <clean CR name>_postgrest_role'
+                type: string
+              grants:
                 type: string
               schemas:
                 type: string
