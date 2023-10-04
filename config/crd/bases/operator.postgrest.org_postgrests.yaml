@@ -5,9 +5,9 @@ metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.11.1
   creationTimestamp: null
-  name: postgrests.postgrest.postgrest.digitalhub
+  name: postgrests.operator.postgrest.org
 spec:
-  group: postgrest.postgrest.digitalhub
+  group: operator.postgrest.org
   names:
     kind: Postgrest
     listKind: PostgrestList

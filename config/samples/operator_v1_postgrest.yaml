@@ -1,4 +1,4 @@
-apiVersion: postgrest.postgrest.digitalhub/v1
+apiVersion: operator.postgrest.org/v1
 kind: Postgrest
 metadata:
   name: cr2

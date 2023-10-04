@@ -34,7 +34,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
-	postgrestv1 "github.com/scc-digitalhub/postgrest-operator/api/v1"
+	operatorv1 "github.com/scc-digitalhub/postgrest-operator/api/v1"
 	"github.com/scc-digitalhub/postgrest-operator/internal/controller"
 	//+kubebuilder:scaffold:imports
 )
@@ -47,7 +47,7 @@ var (
 func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 
-	utilruntime.Must(postgrestv1.AddToScheme(scheme))
+	utilruntime.Must(operatorv1.AddToScheme(scheme))
 	//+kubebuilder:scaffold:scheme
 }
 
@@ -80,7 +80,7 @@ func main() {
 		Port:                   9443,
 		HealthProbeBindAddress: probeAddr,
 		LeaderElection:         enableLeaderElection,
-		LeaderElectionID:       "5b2ab3e0.postgrest.digitalhub", //TODO cambiare in leader.<group>
+		LeaderElectionID:       "leader.postgrest.org",
 		Namespace:              watchNamespace, // namespaced-scope when the value is not an empty string
 	}
 

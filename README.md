@@ -4,11 +4,11 @@ There is an available deployment file ready to be used. Install operator and CRD
 kubectl apply -f deployment.yaml
 ```
 
-An example CR is found at `config/samples/postgrest_v1_postgrest.yaml`. The CRD included in the deployment file is found at `config/crd/bases/postgrest.postgrest.digitalhub_postgrests.yaml`.
+An example CR is found at `config/samples/operator_v1_postgrest.yaml`. The CRD included in the deployment file is found at `config/crd/bases/operator.postgrest.org_postgrests.yaml`.
 
 Launch CR:
 ```sh
-kubectl apply -f config/samples/postgrest_v1_postgrest.yaml
+kubectl apply -f config/samples/operator_v1_postgrest.yaml
 ```
 
 ## Description

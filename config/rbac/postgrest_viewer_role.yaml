@@ -12,7 +12,7 @@ metadata:
   name: postgrest-viewer-role
 rules:
 - apiGroups:
-  - postgrest.postgrest.digitalhub
+  - operator.postgrest.org
   resources:
   - postgrests
   verbs:
@@ -20,7 +20,7 @@ rules:
   - list
   - watch
 - apiGroups:
-  - postgrest.postgrest.digitalhub
+  - operator.postgrest.org
   resources:
   - postgrests/status
   verbs:

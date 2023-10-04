@@ -17,9 +17,9 @@ metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.11.1
   creationTimestamp: null
-  name: postgrests.postgrest.postgrest.digitalhub
+  name: postgrests.operator.postgrest.org
 spec:
-  group: postgrest.postgrest.digitalhub
+  group: operator.postgrest.org
   names:
     kind: Postgrest
     listKind: PostgrestList
@@ -190,7 +190,7 @@ rules:
   - update
   - watch
 - apiGroups:
-  - postgrest.postgrest.digitalhub
+  - operator.postgrest.org
   resources:
   - postgrests
   verbs:
@@ -202,13 +202,13 @@ rules:
   - update
   - watch
 - apiGroups:
-  - postgrest.postgrest.digitalhub
+  - operator.postgrest.org
   resources:
   - postgrests/finalizers
   verbs:
   - update
 - apiGroups:
-  - postgrest.postgrest.digitalhub
+  - operator.postgrest.org
   resources:
   - postgrests/status
   verbs:

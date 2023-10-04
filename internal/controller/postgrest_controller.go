@@ -40,7 +40,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
-	postgrestv1 "github.com/scc-digitalhub/postgrest-operator/api/v1"
+	operatorv1 "github.com/scc-digitalhub/postgrest-operator/api/v1"
 )
 
 const postgrestImage = "POSTGREST_IMAGE"
@@ -48,7 +48,7 @@ const postgrestImageTag = "POSTGREST_IMAGE_TAG"
 const postgrestServiceType = "POSTGREST_SERVICE_TYPE"
 const postgrestDatabaseUri = "POSTGREST_DATABASE_URI"
 
-const postgrestFinalizer = "postgrest.postgrest.digitalhub/finalizer" //TODO valutare nome
+const postgrestFinalizer = "operator.postgrest.org/finalizer"
 
 // Definitions to manage status conditions
 const (
@@ -77,13 +77,9 @@ func formatResourceName(resourceName string) string {
 	return strings.Join([]string{"postgrest", resourceName}, "-")
 }
 
-// The following markers are used to generate the rules permissions (RBAC) on config/rbac using controller-gen
-// when the command <make manifests> is executed.
-// To know more about markers see: https://book.kubebuilder.io/reference/markers.html
-
-//+kubebuilder:rbac:groups=postgrest.postgrest.digitalhub,namespace=mynamespace,resources=postgrests,verbs=get;list;watch;create;update;patch;delete
-//+kubebuilder:rbac:groups=postgrest.postgrest.digitalhub,namespace=mynamespace,resources=postgrests/status,verbs=get;update;patch
-//+kubebuilder:rbac:groups=postgrest.postgrest.digitalhub,namespace=mynamespace,resources=postgrests/finalizers,verbs=update
+//+kubebuilder:rbac:groups=operator.postgrest.org,namespace=mynamespace,resources=postgrests,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups=operator.postgrest.org,namespace=mynamespace,resources=postgrests/status,verbs=get;update;patch
+//+kubebuilder:rbac:groups=operator.postgrest.org,namespace=mynamespace,resources=postgrests/finalizers,verbs=update
 //+kubebuilder:rbac:groups=core,namespace=mynamespace,resources=events,verbs=create;patch
 //+kubebuilder:rbac:groups=apps,namespace=mynamespace,resources=deployments,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=core,namespace=mynamespace,resources=pods,verbs=get;list;watch
@@ -92,15 +88,7 @@ func formatResourceName(resourceName string) string {
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
-
-// It is essential for the controller's reconciliation loop to be idempotent. By following the Operator
-// pattern you will create Controllers which provide a reconcile function
-// responsible for synchronizing resources until the desired state is reached on the cluster.
-// Breaking this recommendation goes against the design principles of controller-runtime.
-// and may lead to unforeseen consequences such as resources becoming stuck and requiring manual intervention.
-// For further info:
-// - About Operator Pattern: https://kubernetes.io/docs/concepts/extend-kubernetes/operator/
-// - About Controllers: https://kubernetes.io/docs/concepts/architecture/controller/
+// For more details, check Reconcile and its Result here:
 // - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.14.1/pkg/reconcile
 func (r *PostgrestReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := log.FromContext(ctx)
@@ -108,7 +96,7 @@ func (r *PostgrestReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	// Fetch the Postgrest instance
 	// The purpose is check if the Custom Resource for the Kind Postgrest
 	// is applied on the cluster if not we return nil to stop the reconciliation
-	postgrest := &postgrestv1.Postgrest{}
+	postgrest := &operatorv1.Postgrest{}
 	err := r.Get(ctx, req.NamespacedName, postgrest)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
@@ -400,7 +388,7 @@ func (r *PostgrestReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	return ctrl.Result{}, nil
 }
 
-func createAnonRole(cr *postgrestv1.Postgrest, ctx context.Context) error {
+func createAnonRole(cr *operatorv1.Postgrest, ctx context.Context) error {
 	log := log.FromContext(ctx)
 
 	// Get connection string from env
@@ -475,7 +463,7 @@ func cleanAnonRole(crName string) string {
 	return strings.ToLower(cleanDashes) + "_postgrest_role"
 }
 
-func deleteAnonRole(cr *postgrestv1.Postgrest) error {
+func deleteAnonRole(cr *operatorv1.Postgrest) error {
 	// Get connection string from env
 	databaseUri, found := os.LookupEnv(postgrestDatabaseUri)
 	if !found {
@@ -506,7 +494,7 @@ func deleteAnonRole(cr *postgrestv1.Postgrest) error {
 }
 
 // Will perform the required operations before delete the CR.
-func (r *PostgrestReconciler) doFinalizerOperationsForPostgrest(cr *postgrestv1.Postgrest) error {
+func (r *PostgrestReconciler) doFinalizerOperationsForPostgrest(cr *operatorv1.Postgrest) error {
 	err := deleteAnonRole(cr)
 	if err != nil {
 		return err
@@ -529,7 +517,7 @@ func (r *PostgrestReconciler) doFinalizerOperationsForPostgrest(cr *postgrestv1.
 
 // deploymentForPostgrest returns a Postgrest Deployment object
 func (r *PostgrestReconciler) deploymentForPostgrest(
-	postgrest *postgrestv1.Postgrest) (*appsv1.Deployment, error) {
+	postgrest *operatorv1.Postgrest) (*appsv1.Deployment, error) {
 	image, found := os.LookupEnv(postgrestImage)
 	if !found {
 		image = "postgrest/postgrest"
@@ -664,7 +652,7 @@ func (r *PostgrestReconciler) deploymentForPostgrest(
 	return dep, nil
 }
 
-func (r *PostgrestReconciler) serviceForPostgrest(postgrest *postgrestv1.Postgrest) (*corev1.Service, error) {
+func (r *PostgrestReconciler) serviceForPostgrest(postgrest *operatorv1.Postgrest) (*corev1.Service, error) {
 	tag, found := os.LookupEnv(postgrestImageTag)
 	if !found {
 		tag = "latest"
@@ -707,7 +695,7 @@ func (r *PostgrestReconciler) serviceForPostgrest(postgrest *postgrestv1.Postgre
 	return service, nil
 }
 
-func (r *PostgrestReconciler) secretForPostgrest(postgrest *postgrestv1.Postgrest) (*corev1.Secret, error) {
+func (r *PostgrestReconciler) secretForPostgrest(postgrest *operatorv1.Postgrest) (*corev1.Secret, error) {
 	databaseUri, found := os.LookupEnv(postgrestDatabaseUri)
 	if !found {
 		return nil, errors.New(fmt.Sprintf("Database connection string not specified, environment variable %v is required", postgrestDatabaseUri))
@@ -755,7 +743,7 @@ func selectorsForPostgrest(name string) map[string]string {
 // desirable state on the cluster
 func (r *PostgrestReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&postgrestv1.Postgrest{}).
+		For(&operatorv1.Postgrest{}).
 		Owns(&appsv1.Deployment{}).
 		Complete(r)
 }

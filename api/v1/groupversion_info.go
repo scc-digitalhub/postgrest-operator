@@ -14,9 +14,9 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-// Package v1 contains API Schema definitions for the postgrest v1 API group
+// Package v1 contains API Schema definitions for the operator v1 API group
 // +kubebuilder:object:generate=true
-// +groupName=postgrest.postgrest.digitalhub
+// +groupName=operator.postgrest.org
 package v1
 
 import (
@@ -26,7 +26,7 @@ import (
 
 var (
 	// GroupVersion is group version used to register these objects
-	GroupVersion = schema.GroupVersion{Group: "postgrest.postgrest.digitalhub", Version: "v1"} //TODO cambiare in <group>
+	GroupVersion = schema.GroupVersion{Group: "operator.postgrest.org", Version: "v1"}
 
 	// SchemeBuilder is used to add go types to the GroupVersionKind scheme
 	SchemeBuilder = &scheme.Builder{GroupVersion: GroupVersion}

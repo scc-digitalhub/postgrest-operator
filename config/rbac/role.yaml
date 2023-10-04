@@ -58,7 +58,7 @@ rules:
   - update
   - watch
 - apiGroups:
-  - postgrest.postgrest.digitalhub
+  - operator.postgrest.org
   resources:
   - postgrests
   verbs:
@@ -70,13 +70,13 @@ rules:
   - update
   - watch
 - apiGroups:
-  - postgrest.postgrest.digitalhub
+  - operator.postgrest.org
   resources:
   - postgrests/finalizers
   verbs:
   - update
 - apiGroups:
-  - postgrest.postgrest.digitalhub
+  - operator.postgrest.org
   resources:
   - postgrests/status
   verbs:
