@@ -25,6 +25,8 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/exp/slices"
+
 	_ "github.com/lib/pq"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -64,6 +66,8 @@ const (
 
 	// Custom resource is deleted, perform finalizer operations
 	typeDegraded = "Degraded"
+
+	typeUpdating = "Updating"
 )
 
 // PostgrestReconciler reconciles a Postgrest object
@@ -115,7 +119,7 @@ func (r *PostgrestReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		log.Info("State unspecified, updating to initializing")
 		postgrest.Status.State = typeInitializing
 		if err = r.Status().Update(ctx, postgrest); err != nil {
-			log.Error(err, "Failed to update Postgrest status")
+			log.Error(err, "failed to update Postgrest status")
 			return ctrl.Result{}, err
 		}
 
@@ -126,13 +130,13 @@ func (r *PostgrestReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		log.Info("Creating anonymous role")
 		err = createAnonRole(postgrest, ctx)
 		if err != nil {
-			log.Error(err, "Error while handling anonymous role")
+			log.Error(err, "error while handling anonymous role")
 			return ctrl.Result{}, err
 		}
 
 		postgrest.Status.State = typeDeploying
 		if err = r.Status().Update(ctx, postgrest); err != nil {
-			log.Error(err, "Failed to update Postgrest status")
+			log.Error(err, "failed to update Postgrest status")
 			return ctrl.Result{}, err
 		}
 
@@ -172,7 +176,7 @@ func (r *PostgrestReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 				postgrest.Status.State = typeError
 
 				if err := r.Status().Update(ctx, postgrest); err != nil {
-					log.Error(err, "Failed to update Postgrest status")
+					log.Error(err, "failed to update Postgrest status")
 					return ctrl.Result{}, err
 				}
 
@@ -202,7 +206,7 @@ func (r *PostgrestReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 				postgrest.Status.State = typeError
 
 				if err := r.Status().Update(ctx, postgrest); err != nil {
-					log.Error(err, "Failed to update Postgrest status")
+					log.Error(err, "failed to update Postgrest status")
 					return ctrl.Result{}, err
 				}
 
@@ -217,7 +221,7 @@ func (r *PostgrestReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 				return ctrl.Result{}, err
 			}
 		} else if err != nil {
-			log.Error(err, "Failed to get deployment")
+			log.Error(err, "failed to get deployment")
 			// Return error for reconciliation to be re-trigged
 			return ctrl.Result{}, err
 		}
@@ -233,7 +237,7 @@ func (r *PostgrestReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 				postgrest.Status.State = typeError
 
 				if err := r.Status().Update(ctx, postgrest); err != nil {
-					log.Error(err, "Failed to update Postgrest status")
+					log.Error(err, "failed to update Postgrest status")
 					return ctrl.Result{}, err
 				}
 
@@ -245,14 +249,14 @@ func (r *PostgrestReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 				return ctrl.Result{}, err
 			}
 		} else if err != nil {
-			log.Error(err, "Failed to get service")
+			log.Error(err, "failed to get service")
 			// Return error for reconciliation to be re-trigged
 			return ctrl.Result{}, err
 		}
 
 		postgrest.Status.State = typeRunning
 		if err = r.Status().Update(ctx, postgrest); err != nil {
-			log.Error(err, "Failed to update Postgrest status")
+			log.Error(err, "failed to update Postgrest status")
 			return ctrl.Result{}, err
 		}
 
@@ -281,25 +285,25 @@ func (r *PostgrestReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			// raise the issue "the object has been modified, please apply
 			// your changes to the latest version and try again" which would re-trigger the reconciliation
 			if err := r.Get(ctx, req.NamespacedName, postgrest); err != nil {
-				log.Error(err, "Failed to re-fetch Postgrest")
+				log.Error(err, "failed to re-fetch Postgrest")
 				return ctrl.Result{}, err
 			}
 
 			postgrest.Status.State = typeDegraded
 
 			if err := r.Status().Update(ctx, postgrest); err != nil {
-				log.Error(err, "Failed to update Postgrest status")
+				log.Error(err, "failed to update Postgrest status")
 				return ctrl.Result{}, err
 			}
 
 			log.Info("Removing Finalizer for Postgrest after successfully perform the operations")
 			if ok := controllerutil.RemoveFinalizer(postgrest, postgrestFinalizer); !ok {
-				log.Error(err, "Failed to remove finalizer for Postgrest")
+				log.Error(err, "failed to remove finalizer for Postgrest")
 				return ctrl.Result{Requeue: true}, nil
 			}
 
 			if err := r.Update(ctx, postgrest); err != nil {
-				log.Error(err, "Failed to remove finalizer for Postgrest")
+				log.Error(err, "failed to remove finalizer for Postgrest")
 				return ctrl.Result{}, err
 			}
 		}
@@ -310,15 +314,28 @@ func (r *PostgrestReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		dep := &appsv1.Deployment{}
 		err = r.Get(ctx, types.NamespacedName{Name: formatResourceName(postgrest.Name), Namespace: postgrest.Namespace}, dep)
 		if err != nil {
-			log.Error(err, "Error while retrieving deployment")
+			log.Error(err, "error while retrieving deployment")
 			return ctrl.Result{}, err
+		}
+
+		updated, err := crUpdated(dep, postgrest)
+		if err != nil {
+			log.Error(err, "error while checking for update")
+			return ctrl.Result{}, err
+		}
+		if updated {
+			postgrest.Status.State = typeUpdating
+			if err = r.Status().Update(ctx, postgrest); err != nil {
+				log.Error(err, "failed to update Postgrest status")
+				return ctrl.Result{}, err
+			}
 		}
 
 		// Deployment ready
 		if dep.Status.ReadyReplicas > 0 {
 			log.Info("Deployment is ready")
 			if err = r.Status().Update(ctx, postgrest); err != nil {
-				log.Error(err, "Failed to update Postgrest status")
+				log.Error(err, "failed to update Postgrest status")
 				return ctrl.Result{}, err
 			}
 
@@ -331,13 +348,42 @@ func (r *PostgrestReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			postgrest.Status.State = typeError
 
 			if err = r.Status().Update(ctx, postgrest); err != nil {
-				log.Error(err, "Failed to update Postgrest status")
+				log.Error(err, "failed to update Postgrest status")
 				return ctrl.Result{}, err
 			}
 			return ctrl.Result{Requeue: true}, nil
 		}
 
 		return ctrl.Result{RequeueAfter: time.Minute}, nil
+	}
+
+	if postgrest.Status.State == typeUpdating {
+		log.Info("Updating: deleting previous deployment and anon role")
+
+		// Delete deployment
+		deployment := &appsv1.Deployment{}
+		err = r.Get(ctx, types.NamespacedName{Name: formatResourceName(postgrest.Name), Namespace: postgrest.Namespace}, deployment)
+		if err == nil {
+			if err := r.Delete(ctx, deployment); err != nil {
+				log.Error(err, "Failed to clean up deployment")
+			}
+		} else if err != nil && !apierrors.IsNotFound(err) {
+			log.Error(err, "Failed to get deployment")
+			// Return error for reconciliation to be re-trigged
+			return ctrl.Result{}, err
+		}
+
+		// Delete auto-generated anonRole
+		deleteAutoGeneratedAnonRole(postgrest)
+
+		postgrest.Status.State = typeInitializing
+
+		if err := r.Status().Update(ctx, postgrest); err != nil {
+			log.Error(err, "Failed to update Postgrest status")
+			return ctrl.Result{}, err
+		}
+
+		return ctrl.Result{Requeue: true}, nil
 	}
 
 	if postgrest.Status.State == typeError {
@@ -388,13 +434,102 @@ func (r *PostgrestReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	return ctrl.Result{}, nil
 }
 
+func crUpdated(dep *appsv1.Deployment, cr *operatorv1.Postgrest) (bool, error) {
+	previousAnonRole := ""
+	previousSchemas := ""
+	for _, env := range dep.Spec.Template.Spec.Containers[0].Env {
+		if env.Name == "PGRST_DB_ANON_ROLE" {
+			previousAnonRole = env.Value
+			if (cr.Spec.AnonRole != "" && previousAnonRole != cr.Spec.AnonRole) || (cr.Spec.AnonRole == "" && previousAnonRole != cleanAnonRole(cr.Name)) {
+				return true, nil
+			}
+		}
+		if env.Name == "PGRST_DB_SCHEMA" {
+			previousSchemas = env.Value
+			if previousSchemas != cr.Spec.Schemas {
+				return true, nil
+			}
+		}
+	}
+
+	if previousAnonRole == cleanAnonRole(cr.Name) {
+		// Get connection string from env
+		databaseUri, found := os.LookupEnv(postgrestDatabaseUri)
+		if !found {
+			return false, fmt.Errorf("database connection string not specified, environment variable %v is required", postgrestDatabaseUri)
+		}
+		// Connect to database
+		db, err := sql.Open("postgres", databaseUri)
+		if err != nil {
+			return false, err
+		}
+		defer db.Close()
+
+		rows, err := db.Query("SELECT table_schema, table_name, privilege_type FROM information_schema.role_table_grants WHERE grantee = $1", previousAnonRole)
+		if err != nil {
+			return false, err
+		}
+		defer rows.Close()
+
+		cleanedNewGrants := strings.ReplaceAll(cr.Spec.Grants, " ", "")
+		newGrants := strings.Split(strings.ToUpper(cleanedNewGrants), ",")
+		if len(newGrants) == 0 || (len(newGrants) == 1 && newGrants[0] == "") {
+			newGrants = []string{"SELECT"}
+		}
+
+		oldGrants := []string{}
+		oldTables := []string{}
+
+		for rows.Next() {
+			var tableSchema string
+			var tableName string
+			var privilegeType string
+			rows.Scan(&tableSchema, &tableName, &privilegeType)
+
+			// Grants
+			if !slices.Contains(newGrants, privilegeType) {
+				return true, nil
+			}
+
+			if !slices.Contains(oldGrants, privilegeType) {
+				oldGrants = append(oldGrants, privilegeType)
+			}
+
+			// Tables
+			fullTableName := fmt.Sprintf("%v.%v", tableSchema, tableName)
+
+			if !slices.Contains(cr.Spec.Tables, fullTableName) {
+				return true, nil
+			}
+
+			if !slices.Contains(oldTables, fullTableName) {
+				oldTables = append(oldTables, fullTableName)
+			}
+		}
+
+		for _, grant := range newGrants {
+			if !slices.Contains(oldGrants, grant) {
+				return true, nil
+			}
+		}
+
+		for _, table := range cr.Spec.Tables {
+			if !slices.Contains(oldTables, table) {
+				return true, nil
+			}
+		}
+	}
+
+	return false, nil
+}
+
 func createAnonRole(cr *operatorv1.Postgrest, ctx context.Context) error {
 	log := log.FromContext(ctx)
 
 	// Get connection string from env
 	databaseUri, found := os.LookupEnv(postgrestDatabaseUri)
 	if !found {
-		return errors.New(fmt.Sprintf("Database connection string not specified, environment variable %v is required", postgrestDatabaseUri))
+		return fmt.Errorf("database connection string not specified, environment variable %v is required", postgrestDatabaseUri)
 	}
 	// Connect to database
 	db, err := sql.Open("postgres", databaseUri)
@@ -406,7 +541,7 @@ func createAnonRole(cr *operatorv1.Postgrest, ctx context.Context) error {
 	// If anonymous role is defined, check if it exists
 	if cr.Spec.AnonRole != "" {
 		if cr.Spec.Tables != nil {
-			return errors.New("Inconsistent configuration: either specify anonymous role or a list of tables")
+			return errors.New("inconsistent configuration: either specify anonymous role or a list of tables")
 		}
 
 		log.Info(fmt.Sprintf("Anonymous role %v specified, its permissions will be used", cr.Spec.AnonRole))
@@ -415,7 +550,7 @@ func createAnonRole(cr *operatorv1.Postgrest, ctx context.Context) error {
 			return (err)
 		}
 		if rows == nil || !rows.Next() {
-			return errors.New("Declared anonymous role does not exist, either manually create it or remove it to use autocreation")
+			return errors.New("declared anonymous role does not exist, either manually create it or remove it to use autocreation")
 		}
 	} else {
 		// Create anonymous role
@@ -463,31 +598,37 @@ func cleanAnonRole(crName string) string {
 	return strings.ToLower(cleanDashes) + "_postgrest_role"
 }
 
-func deleteAnonRole(cr *operatorv1.Postgrest) error {
+func deleteAutoGeneratedAnonRole(cr *operatorv1.Postgrest) error {
 	// Get connection string from env
 	databaseUri, found := os.LookupEnv(postgrestDatabaseUri)
 	if !found {
-		return errors.New(fmt.Sprintf("Database connection string not specified, environment variable %v is required", postgrestDatabaseUri))
+		return fmt.Errorf("database connection string not specified, environment variable %v is required", postgrestDatabaseUri)
 	}
+
+	db, err := sql.Open("postgres", databaseUri)
+	if err != nil {
+		return (err)
+	}
+	defer db.Close()
+
+	anonRole := cleanAnonRole(cr.Name)
+
+	_, err = db.Exec(fmt.Sprintf("DROP OWNED BY %v", anonRole))
+	if err != nil && err.Error() != fmt.Sprintf("pq: role \"%v\" does not exist", strings.ToLower(anonRole)) {
+		return (err)
+	}
+	_, err = db.Exec(fmt.Sprintf("DROP ROLE IF EXISTS %v", anonRole))
+	if err != nil {
+		return (err)
+	}
+
+	return nil
+}
+
+func deleteAnonRole(cr *operatorv1.Postgrest) error {
 	// Only delete anonymous role if it was created by the controller
 	if cr.Spec.AnonRole == "" {
-		// Connect to database
-		db, err := sql.Open("postgres", databaseUri)
-		if err != nil {
-			return (err)
-		}
-		defer db.Close()
-
-		anonRole := cleanAnonRole(cr.Name)
-
-		_, err = db.Exec(fmt.Sprintf("DROP OWNED BY %v", anonRole))
-		if err != nil && err.Error() != fmt.Sprintf("pq: role \"%v\" does not exist", strings.ToLower(anonRole)) {
-			return (err)
-		}
-		_, err = db.Exec(fmt.Sprintf("DROP ROLE IF EXISTS %v", anonRole))
-		if err != nil {
-			return (err)
-		}
+		return deleteAutoGeneratedAnonRole(cr)
 	}
 
 	return nil
@@ -562,7 +703,7 @@ func (r *PostgrestReconciler) deploymentForPostgrest(
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      formatResourceName(postgrest.Name),
 			Namespace: postgrest.Namespace,
-			Labels: ls,
+			Labels:    ls,
 		},
 		Spec: appsv1.DeploymentSpec{
 			Selector: &metav1.LabelSelector{
@@ -665,7 +806,7 @@ func (r *PostgrestReconciler) serviceForPostgrest(postgrest *operatorv1.Postgres
 	} else if !found || serviceType == "" || strings.EqualFold(serviceType, "NodePort") {
 		corev1ServiceType = corev1.ServiceTypeNodePort
 	} else {
-		return nil, errors.New("Invalid service type")
+		return nil, errors.New("invalid service type")
 	}
 
 	ls := labelsForPostgrest(postgrest.Name, tag)
@@ -675,7 +816,7 @@ func (r *PostgrestReconciler) serviceForPostgrest(postgrest *operatorv1.Postgres
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      formatResourceName(postgrest.Name),
 			Namespace: postgrest.Namespace,
-			Labels: ls,
+			Labels:    ls,
 		},
 		Spec: corev1.ServiceSpec{
 			Selector: selectors,
@@ -698,7 +839,7 @@ func (r *PostgrestReconciler) serviceForPostgrest(postgrest *operatorv1.Postgres
 func (r *PostgrestReconciler) secretForPostgrest(postgrest *operatorv1.Postgrest) (*corev1.Secret, error) {
 	databaseUri, found := os.LookupEnv(postgrestDatabaseUri)
 	if !found {
-		return nil, errors.New(fmt.Sprintf("Database connection string not specified, environment variable %v is required", postgrestDatabaseUri))
+		return nil, fmt.Errorf("database connection string not specified, environment variable %v is required", postgrestDatabaseUri)
 	}
 
 	tag, found := os.LookupEnv(postgrestImageTag)
@@ -710,7 +851,7 @@ func (r *PostgrestReconciler) secretForPostgrest(postgrest *operatorv1.Postgrest
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      formatResourceName(postgrest.Name),
 			Namespace: postgrest.Namespace,
-			Labels: labelsForPostgrest(postgrest.Name, tag),
+			Labels:    labelsForPostgrest(postgrest.Name, tag),
 		},
 		StringData: map[string]string{postgrestDatabaseUri: databaseUri},
 	}
