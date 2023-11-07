@@ -25,7 +25,7 @@ import (
 // PostgrestSpec defines the desired state of Postgrest
 type PostgrestSpec struct {
 	// +operator-sdk:csv:customresourcedefinitions:type=spec
-	Schemas string `json:"schemas,omitempty"` // PGRST_DB_SCHEMAS
+	Schema string `json:"schema,omitempty"` // PGRST_DB_SCHEMAS
 
 	// +operator-sdk:csv:customresourcedefinitions:type=spec
 	Tables []string `json:"tables,omitempty"`

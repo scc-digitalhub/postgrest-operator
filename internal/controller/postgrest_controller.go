@@ -431,12 +431,14 @@ func (r *PostgrestReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{}, nil
 	}
 
+	// Auto-generated anonymous role is not deleted on error
+
 	return ctrl.Result{}, nil
 }
 
 func crUpdated(dep *appsv1.Deployment, cr *operatorv1.Postgrest) (bool, error) {
 	previousAnonRole := ""
-	previousSchemas := ""
+	previousSchema := ""
 	for _, env := range dep.Spec.Template.Spec.Containers[0].Env {
 		if env.Name == "PGRST_DB_ANON_ROLE" {
 			previousAnonRole = env.Value
@@ -444,9 +446,9 @@ func crUpdated(dep *appsv1.Deployment, cr *operatorv1.Postgrest) (bool, error) {
 				return true, nil
 			}
 		}
-		if env.Name == "PGRST_DB_SCHEMA" {
-			previousSchemas = env.Value
-			if previousSchemas != cr.Spec.Schemas {
+		if env.Name == "PGRST_DB_SCHEMAS" {
+			previousSchema = env.Value
+			if previousSchema != cr.Spec.Schema {
 				return true, nil
 			}
 		}
@@ -480,6 +482,8 @@ func crUpdated(dep *appsv1.Deployment, cr *operatorv1.Postgrest) (bool, error) {
 		oldGrants := []string{}
 		oldTables := []string{}
 
+		schema := getSchema(cr)
+
 		for rows.Next() {
 			var tableSchema string
 			var tableName string
@@ -496,14 +500,16 @@ func crUpdated(dep *appsv1.Deployment, cr *operatorv1.Postgrest) (bool, error) {
 			}
 
 			// Tables
-			fullTableName := fmt.Sprintf("%v.%v", tableSchema, tableName)
-
-			if !slices.Contains(cr.Spec.Tables, fullTableName) {
+			if tableSchema != schema {
 				return true, nil
 			}
 
-			if !slices.Contains(oldTables, fullTableName) {
-				oldTables = append(oldTables, fullTableName)
+			if !slices.Contains(cr.Spec.Tables, tableName) {
+				return true, nil
+			}
+
+			if !slices.Contains(oldTables, tableName) {
+				oldTables = append(oldTables, tableName)
 			}
 		}
 
@@ -566,22 +572,21 @@ func createAnonRole(cr *operatorv1.Postgrest, ctx context.Context) error {
 			}
 		}
 
-		// Grant usage on schemas
-		for _, schema := range strings.Split(cr.Spec.Schemas, ",") {
-			_, err = db.Exec(fmt.Sprintf("GRANT USAGE ON SCHEMA %v TO %v", strings.TrimSpace(schema), anonRole))
-			if err != nil {
-				return (err)
-			}
+		// Grant usage on schema
+		schema := getSchema(cr)
+		_, err = db.Exec(fmt.Sprintf("GRANT USAGE ON SCHEMA %v TO %v", schema, anonRole))
+		if err != nil {
+			return (err)
 		}
 
+		// Assign permissions on tables
 		var grant string = "SELECT"
 		if cr.Spec.Grants != "" {
 			grant = cr.Spec.Grants
 		}
 
-		// Assign permissions on tables
 		for _, table := range cr.Spec.Tables {
-			_, err = db.Exec(fmt.Sprintf("GRANT %v ON TABLE %v TO %v", grant, table, anonRole))
+			_, err = db.Exec(fmt.Sprintf("GRANT %v ON TABLE %v.%v TO %v", grant, schema, table, anonRole))
 			if err != nil {
 				return (err)
 			}
@@ -673,6 +678,8 @@ func (r *PostgrestReconciler) deploymentForPostgrest(
 
 	optional := false
 
+	schema := getSchema(postgrest)
+
 	envs := []corev1.EnvVar{
 		{
 			Name: "PGRST_DB_URI",
@@ -685,8 +692,8 @@ func (r *PostgrestReconciler) deploymentForPostgrest(
 			},
 		},
 		{
-			Name:  "PGRST_DB_SCHEMA",
-			Value: postgrest.Spec.Schemas,
+			Name:  "PGRST_DB_SCHEMAS",
+			Value: schema,
 		},
 	}
 
@@ -887,4 +894,12 @@ func (r *PostgrestReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		For(&operatorv1.Postgrest{}).
 		Owns(&appsv1.Deployment{}).
 		Complete(r)
+}
+
+func getSchema(cr *operatorv1.Postgrest) string {
+	schema := cr.Spec.Schema
+	if schema == "" {
+		schema = "public"
+	}
+	return schema
 }

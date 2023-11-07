@@ -54,7 +54,7 @@ spec:
                 type: string
               grants:
                 type: string
-              schemas:
+              schema:
                 type: string
               tables:
                 items:

@@ -4,8 +4,8 @@ metadata:
   name: cr2
   namespace: postgrest-operator-system
 spec:
-  schemas: operator
+  schema: operator
   tables:
-    - operator.test
+    - test
   anonRole:
   grants: SELECT, UPDATE, INSERT, DELETE
