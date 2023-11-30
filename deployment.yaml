@@ -52,14 +52,14 @@ spec:
                   if not specified, it will be auto-generated as <CR name>_postgrest_role'
                 type: string
               grants:
-                description: Comma-separated string of permissions to grant to the
-                  anonymous role (only if auto-generated)
+                description: Comma-separated string of permitted actions (only if
+                  anonymous role is auto-generated)
                 type: string
               schema:
                 description: Schema for this PostgREST instance
                 type: string
               tables:
-                description: Tables the anonymous role can manage (only if auto-generated)
+                description: Tables to expose (only if anonymous role is auto-generated)
                 items:
                   type: string
                 type: array

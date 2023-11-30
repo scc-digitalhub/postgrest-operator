@@ -24,20 +24,20 @@ import (
 
 // PostgREST properties
 type PostgrestSpec struct {
-	// +operator-sdk:csv:customresourcedefinitions:type=spec
 	// Schema for this PostgREST instance
+	// +operator-sdk:csv:customresourcedefinitions:type=spec
 	Schema string `json:"schema,omitempty"` // PGRST_DB_SCHEMAS
 
+	// Tables to expose (only if anonymous role is auto-generated)
 	// +operator-sdk:csv:customresourcedefinitions:type=spec
-	// Tables the anonymous role can manage (only if auto-generated)
 	Tables []string `json:"tables,omitempty"`
 
+	// Comma-separated string of permitted actions (only if anonymous role is auto-generated)
 	// +operator-sdk:csv:customresourcedefinitions:type=spec
-	// Comma-separated string of permissions to grant to the anonymous role (only if auto-generated)
 	Grants string `json:"grants,omitempty"`
 
-	// +operator-sdk:csv:customresourcedefinitions:type=spec
 	// Role used by PostgREST to authenticate on the database; if not specified, it will be auto-generated as <CR name>_postgrest_role'
+	// +operator-sdk:csv:customresourcedefinitions:type=spec
 	AnonRole string `json:"anonRole,omitempty"` // PGRST_DB_ANON_ROLE
 }
 
