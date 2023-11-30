@@ -22,24 +22,26 @@ import (
 
 // NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
 
-// PostgrestSpec defines the desired state of Postgrest
+// PostgREST properties
 type PostgrestSpec struct {
 	// +operator-sdk:csv:customresourcedefinitions:type=spec
+	// Schema for this PostgREST instance
 	Schema string `json:"schema,omitempty"` // PGRST_DB_SCHEMAS
 
 	// +operator-sdk:csv:customresourcedefinitions:type=spec
+	// Tables the anonymous role can manage (only if auto-generated)
 	Tables []string `json:"tables,omitempty"`
 
 	// +operator-sdk:csv:customresourcedefinitions:type=spec
+	// Comma-separated string of permissions to grant to the anonymous role (only if auto-generated)
 	Grants string `json:"grants,omitempty"`
 
 	// +operator-sdk:csv:customresourcedefinitions:type=spec
-	// if specified: check it exists, assume its permissions are already correct
-	// if not specified: create with permissions as <clean CR name>_postgrest_role
+	// Role used by PostgREST to authenticate on the database; if not specified, it will be auto-generated as <CR name>_postgrest_role'
 	AnonRole string `json:"anonRole,omitempty"` // PGRST_DB_ANON_ROLE
 }
 
-// PostgrestStatus defines the observed state of Postgrest
+// PostgREST status
 type PostgrestStatus struct {
 	// +operator-sdk:csv:customresourcedefinitions:type=status
 	State string `json:"state,omitempty" patchStrategy:"merge"`
@@ -48,7 +50,7 @@ type PostgrestStatus struct {
 //+kubebuilder:object:root=true
 //+kubebuilder:subresource:status
 
-// Postgrest is the Schema for the postgrests API
+// Schema for the postgrests API
 type Postgrest struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
@@ -59,7 +61,7 @@ type Postgrest struct {
 
 //+kubebuilder:object:root=true
 
-// PostgrestList contains a list of Postgrest
+// List of Postgrest
 type PostgrestList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
