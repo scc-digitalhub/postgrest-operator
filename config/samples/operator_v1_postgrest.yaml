@@ -13,7 +13,7 @@ spec:
     host: 192.168.178.120
     port: 5432
     database: postgres
-    user: postgres
+    user:
     password:
     extraParams: sslmode=disable
     secretName: mysecret

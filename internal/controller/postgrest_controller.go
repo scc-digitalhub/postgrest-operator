@@ -21,6 +21,8 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"net"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -861,15 +863,9 @@ func (r *PostgrestReconciler) serviceForPostgrest(postgrest *operatorv1.Postgres
 }
 
 func (r *PostgrestReconciler) createConnectionString(postgrest *operatorv1.Postgrest, ctx context.Context) (string, error) {
-	log := log.FromContext(ctx)
 	host := postgrest.Spec.Connection.Host
 	if host == "" {
 		return "", fmt.Errorf("postgres host missing from spec")
-	}
-
-	port := postgrest.Spec.Connection.Port
-	if port == 0 {
-		return "", fmt.Errorf("postgres port missing from spec")
 	}
 
 	database := postgrest.Spec.Connection.Database
@@ -878,31 +874,58 @@ func (r *PostgrestReconciler) createConnectionString(postgrest *operatorv1.Postg
 	}
 
 	user := postgrest.Spec.Connection.User
-	if user == "" {
-		return "", fmt.Errorf("postgres user missing from spec")
-	}
-
 	password := postgrest.Spec.Connection.Password
-	queryParams := postgrest.Spec.Connection.ExtraParams
 	secretName := postgrest.Spec.Connection.SecretName
 
 	// check that there is either password or secretName
-	if (password == "" && secretName == "") || (password != "" && secretName != "") {
-		return "", fmt.Errorf("either specify password or secretName")
-	}
-
 	if secretName != "" {
-		// read password from secret
+		if password != "" || user != "" {
+			return "", fmt.Errorf("either specify user and password or secretName")
+		}
+
+		//read secret
 		secret := &corev1.Secret{}
 		err := r.Get(ctx, types.NamespacedName{Name: secretName, Namespace: postgrest.Namespace}, secret)
 		if err != nil {
 			return "", err
 		}
-		password = string(secret.Data["password"])
-		log.Info("password from secret", "pw", password)
+
+		//check if secret contains POSTGRES_URL
+		postgresUrlFromSecret := secret.Data["POSTGRES_URL"]
+		if postgresUrlFromSecret != nil {
+			//compare with host and database
+			u, err := url.Parse(string(postgresUrlFromSecret))
+			if err != nil {
+				return "", fmt.Errorf("secret contains invalid POSTGRES_URL")
+			}
+			h, _, _ := net.SplitHostPort(u.Host)
+			if h != host || u.Path[1:] != database {
+				return "", fmt.Errorf("host or database in POSTGRES_URL does not match CR spec")
+			}
+			return string(postgresUrlFromSecret), nil
+		} else {
+			//check that secret contains USER and PASSWORD
+			userFromSecret := secret.Data["USER"]
+			passwordFromSecret := secret.Data["PASSWORD"]
+			if userFromSecret == nil || passwordFromSecret == nil {
+				return "", fmt.Errorf("secret must contain USER and PASSWORD")
+			}
+
+			user = string(userFromSecret)
+			password = string(passwordFromSecret)
+		}
+	} else if password == "" || user == "" {
+		return "", fmt.Errorf("specify both user and password")
 	}
 
-	postgresUri := fmt.Sprintf("postgresql://%v:%v@%v:%v/%v", user, password, host, port, database)
+	port := postgrest.Spec.Connection.Port
+	queryParams := postgrest.Spec.Connection.ExtraParams
+
+	if port != 0 {
+		host = fmt.Sprintf("%v:%v", host, port)
+	}
+
+	postgresUri := fmt.Sprintf("postgresql://%v:%v@%v/%v", user, password, host, database)
 
 	if queryParams != "" {
 		postgresUri += fmt.Sprintf("?%v", queryParams)
