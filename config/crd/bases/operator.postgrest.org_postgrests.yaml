@@ -39,6 +39,27 @@ spec:
                 description: Role used by PostgREST to authenticate on the database;
                   if not specified, it will be auto-generated as <CR name>_postgrest_role'
                 type: string
+              connection:
+                description: Properties to connect to Postgres
+                properties:
+                  database:
+                    type: string
+                  extraParams:
+                    description: Additional connection properties as query parameters
+                      (e.g., sslmode=disable)
+                    type: string
+                  host:
+                    type: string
+                  password:
+                    type: string
+                  port:
+                    type: integer
+                  secretName:
+                    description: Alternative to password
+                    type: string
+                  user:
+                    type: string
+                type: object
               grants:
                 description: Comma-separated string of permitted actions (only if
                   anonymous role is auto-generated)

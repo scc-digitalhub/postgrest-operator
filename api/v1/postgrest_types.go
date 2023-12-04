@@ -39,6 +39,22 @@ type PostgrestSpec struct {
 	// Role used by PostgREST to authenticate on the database; if not specified, it will be auto-generated as <CR name>_postgrest_role'
 	// +operator-sdk:csv:customresourcedefinitions:type=spec
 	AnonRole string `json:"anonRole,omitempty"` // PGRST_DB_ANON_ROLE
+
+	// Properties to connect to Postgres
+	// +operator-sdk:csv:customresourcedefinitions:type=spec
+	Connection ConnectionProperties `json:"connection,omitempty"`
+}
+
+type ConnectionProperties struct {
+	Host     string `json:"host,omitempty"`
+	Port     int    `json:"port,omitempty"`
+	Database string `json:"database,omitempty"`
+	User     string `json:"user,omitempty"`
+	Password string `json:"password,omitempty"`
+	// Additional connection properties as query parameters (e.g., sslmode=disable)
+	ExtraParams string `json:"extraParams,omitempty"`
+	// Alternative to password
+	SecretName string `json:"secretName,omitempty"`
 }
 
 // PostgREST status
