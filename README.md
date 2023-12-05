@@ -1,4 +1,4 @@
-# PostgREST operator
+# PostgREST Operator
 
 A Kubernetes operator to start instances of PostgREST.
 
@@ -20,7 +20,7 @@ A PostgREST custom resource's properties are:
 
 - `schema`: **Required**. The schema PostgREST will expose.
 - `anonRole`: *Optional*. The role PostgREST will use to authenticate. If specified, it is assumed to already exist and already have the intended permissions on tables. If not specified, will be auto-generated as as `<CR name>_postgrest_role`.
-- `tables`: *Optional*. Do not set if you already set `anonRole`. List of tables within the schema to expose. If left empty with an auto-generated role, effectively nothing will be exposed.
+- `tables`: Do not set if you already set `anonRole`, otherwise required. List of tables within the schema to expose.
 - `grants`: *Optional*. Ignored if you already set `anonRole`. Comma-separated string listing actions permitted on tables. Defaults to `SELECT` if not specified. A "full" string is `INSERT, SELECT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER`, but you may also use `ALL`.
 - `connection`: **Required**. A structure to indicate the database to connect to. Its sub-properties are:
   - `host`: **Required**.
