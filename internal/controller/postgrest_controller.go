@@ -34,6 +34,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -52,6 +53,13 @@ const postgrestImageTag = "POSTGREST_IMAGE_TAG"
 const postgrestServiceType = "POSTGREST_SERVICE_TYPE"
 
 const postgresUriSecretKey = "postgresUri"
+
+const containerLimitsCpu = "POSTGREST_CONTAINER_LIMITS_CPU"
+const containerLimitsMemory = "POSTGREST_CONTAINER_LIMITS_MEMORY"
+const containerRequestsCpu = "POSTGREST_CONTAINER_REQUESTS_CPU"
+const containerRequestsMemory = "POSTGREST_CONTAINER_REQUESTS_MEMORY"
+
+const genericStatusUpdateFailedMessage = "failed to update Postgrest status"
 
 const postgrestFinalizer = "operator.postgrest.org/finalizer"
 
@@ -122,7 +130,7 @@ func (r *PostgrestReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		log.Info("State unspecified, updating to initializing")
 		postgrest.Status.State = typeInitializing
 		if err = r.Status().Update(ctx, postgrest); err != nil {
-			log.Error(err, "failed to update Postgrest status")
+			log.Error(err, genericStatusUpdateFailedMessage)
 			return ctrl.Result{}, err
 		}
 
@@ -145,7 +153,7 @@ func (r *PostgrestReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 		postgrest.Status.State = typeDeploying
 		if err = r.Status().Update(ctx, postgrest); err != nil {
-			log.Error(err, "failed to update Postgrest status")
+			log.Error(err, genericStatusUpdateFailedMessage)
 			return ctrl.Result{}, err
 		}
 
@@ -185,7 +193,7 @@ func (r *PostgrestReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 				postgrest.Status.State = typeError
 
 				if err := r.Status().Update(ctx, postgrest); err != nil {
-					log.Error(err, "failed to update Postgrest status")
+					log.Error(err, genericStatusUpdateFailedMessage)
 					return ctrl.Result{}, err
 				}
 
@@ -215,7 +223,7 @@ func (r *PostgrestReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 				postgrest.Status.State = typeError
 
 				if err := r.Status().Update(ctx, postgrest); err != nil {
-					log.Error(err, "failed to update Postgrest status")
+					log.Error(err, genericStatusUpdateFailedMessage)
 					return ctrl.Result{}, err
 				}
 
@@ -246,7 +254,7 @@ func (r *PostgrestReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 				postgrest.Status.State = typeError
 
 				if err := r.Status().Update(ctx, postgrest); err != nil {
-					log.Error(err, "failed to update Postgrest status")
+					log.Error(err, genericStatusUpdateFailedMessage)
 					return ctrl.Result{}, err
 				}
 
@@ -265,7 +273,7 @@ func (r *PostgrestReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 		postgrest.Status.State = typeRunning
 		if err = r.Status().Update(ctx, postgrest); err != nil {
-			log.Error(err, "failed to update Postgrest status")
+			log.Error(err, genericStatusUpdateFailedMessage)
 			return ctrl.Result{}, err
 		}
 
@@ -305,7 +313,7 @@ func (r *PostgrestReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			postgrest.Status.State = typeDegraded
 
 			if err := r.Status().Update(ctx, postgrest); err != nil {
-				log.Error(err, "failed to update Postgrest status")
+				log.Error(err, genericStatusUpdateFailedMessage)
 				return ctrl.Result{}, err
 			}
 
@@ -338,6 +346,9 @@ func (r *PostgrestReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 		secret := &corev1.Secret{}
 		err = r.Get(ctx, types.NamespacedName{Name: formatResourceName(postgrest.Name), Namespace: postgrest.Namespace}, secret)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
 
 		updated, err := crUpdated(dep, postgrest, postgresUri, string(secret.Data[postgresUriSecretKey]))
 		if err != nil {
@@ -347,7 +358,7 @@ func (r *PostgrestReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		if updated {
 			postgrest.Status.State = typeUpdating
 			if err = r.Status().Update(ctx, postgrest); err != nil {
-				log.Error(err, "failed to update Postgrest status")
+				log.Error(err, genericStatusUpdateFailedMessage)
 				return ctrl.Result{}, err
 			}
 		}
@@ -356,7 +367,7 @@ func (r *PostgrestReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		if dep.Status.ReadyReplicas > 0 {
 			log.Info("Deployment is ready")
 			if err = r.Status().Update(ctx, postgrest); err != nil {
-				log.Error(err, "failed to update Postgrest status")
+				log.Error(err, genericStatusUpdateFailedMessage)
 				return ctrl.Result{}, err
 			}
 
@@ -369,7 +380,7 @@ func (r *PostgrestReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			postgrest.Status.State = typeError
 
 			if err = r.Status().Update(ctx, postgrest); err != nil {
-				log.Error(err, "failed to update Postgrest status")
+				log.Error(err, genericStatusUpdateFailedMessage)
 				return ctrl.Result{}, err
 			}
 			return ctrl.Result{Requeue: true}, nil
@@ -410,7 +421,7 @@ func (r *PostgrestReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		postgrest.Status.State = typeInitializing
 
 		if err := r.Status().Update(ctx, postgrest); err != nil {
-			log.Error(err, "Failed to update Postgrest status")
+			log.Error(err, genericStatusUpdateFailedMessage)
 			return ctrl.Result{}, err
 		}
 
@@ -581,9 +592,13 @@ func createAnonRole(cr *operatorv1.Postgrest, ctx context.Context, databaseUri s
 			return (err)
 		}
 		if rows == nil || !rows.Next() {
-			return errors.New("declared anonymous role does not exist, either manually create it or remove it to use autocreation")
+			return errors.New("declared anonymous role does not exist, either manually create it or remove it to trigger auto-creation")
 		}
 	} else {
+		if cr.Spec.Tables == nil || len(cr.Spec.Tables) == 0 {
+			return errors.New("the list of tables to expose is empty")
+		}
+
 		// Create anonymous role
 		anonRole := cleanAnonRole(cr.Name)
 		rows, err := db.Query("SELECT FROM pg_catalog.pg_roles WHERE rolname = $1", anonRole)
@@ -695,10 +710,6 @@ func (r *PostgrestReconciler) deploymentForPostgrest(
 	ls := labelsForPostgrest(postgrest.Name, tag)
 	selectors := selectorsForPostgrest(postgrest.Name)
 
-	optional := false
-
-	schema := getSchema(postgrest)
-
 	envs := []corev1.EnvVar{
 		{
 			Name: "PGRST_DB_URI",
@@ -706,13 +717,13 @@ func (r *PostgrestReconciler) deploymentForPostgrest(
 				SecretKeyRef: &corev1.SecretKeySelector{
 					LocalObjectReference: corev1.LocalObjectReference{Name: formatResourceName(postgrest.Name)},
 					Key:                  postgresUriSecretKey,
-					Optional:             &optional,
+					Optional:             &[]bool{false}[0],
 				},
 			},
 		},
 		{
 			Name:  "PGRST_DB_SCHEMAS",
-			Value: schema,
+			Value: getSchema(postgrest),
 		},
 	}
 
@@ -781,6 +792,10 @@ func (r *PostgrestReconciler) deploymentForPostgrest(
 						Image:           strings.Join([]string{image, tag}, ":"),
 						Name:            "postgrest",
 						ImagePullPolicy: corev1.PullIfNotPresent,
+						Resources: corev1.ResourceRequirements{
+							Limits:   getLimits(),
+							Requests: getRequests(),
+						},
 						// Ensure restrictive context for the container
 						// More info: https://kubernetes.io/docs/concepts/security/pod-security-standards/#restricted
 						SecurityContext: &corev1.SecurityContext{
@@ -993,4 +1008,34 @@ func getSchema(cr *operatorv1.Postgrest) string {
 		schema = "public"
 	}
 	return schema
+}
+
+func getLimits() corev1.ResourceList {
+	limits := corev1.ResourceList{}
+
+	limitsCpu, found := os.LookupEnv(containerLimitsCpu)
+	if found {
+		limits[corev1.ResourceCPU] = resource.MustParse(limitsCpu)
+	}
+	limitsMemory, found := os.LookupEnv(containerLimitsMemory)
+	if found {
+		limits[corev1.ResourceMemory] = resource.MustParse(limitsMemory)
+	}
+
+	return limits
+}
+
+func getRequests() corev1.ResourceList {
+	requests := corev1.ResourceList{}
+
+	requestsCpu, found := os.LookupEnv(containerRequestsCpu)
+	if found {
+		requests[corev1.ResourceCPU] = resource.MustParse(requestsCpu)
+	}
+	requestsMemory, found := os.LookupEnv(containerRequestsMemory)
+	if found {
+		requests[corev1.ResourceMemory] = resource.MustParse(requestsMemory)
+	}
+
+	return requests
 }

@@ -446,7 +446,15 @@ spec:
           value: v11.1.0
         - name: POSTGREST_SERVICE_TYPE
           value: ClusterIP
-        image: postgrest.digitalhub/postgrest-operator:2.0.0
+        - name: POSTGREST_CONTAINER_LIMITS_CPU
+          value: 1000m
+        - name: POSTGREST_CONTAINER_LIMITS_MEMORY
+          value: 512Mi
+        - name: POSTGREST_CONTAINER_REQUESTS_CPU
+          value: 200m
+        - name: POSTGREST_CONTAINER_REQUESTS_MEMORY
+          value: 128Mi
+        image: ghcr.io/scc-digitalhub/postgrest-operator:latest
         livenessProbe:
           httpGet:
             path: /healthz
