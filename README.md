@@ -1,6 +1,6 @@
-# postgrest-operator
+# PostgREST operator
 
-Currently, the operator will only be able to create PostgREST instances to expose data from the database the operator is configured for.
+A Kubernetes operator to start instances of PostgREST.
 
 ## Installation
 There is an available deployment file ready to be used. Install operator and CRD:
