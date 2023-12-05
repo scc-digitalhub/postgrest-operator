@@ -67,7 +67,8 @@ spec:
                   port:
                     type: integer
                   secretName:
-                    description: Alternative to password
+                    description: Alternative to user and password properties; secret
+                      will have to contain USER and PASSWORD, optionally POSTGRES_URL
                     type: string
                   user:
                     type: string

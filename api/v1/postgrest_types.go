@@ -53,7 +53,7 @@ type ConnectionProperties struct {
 	Password string `json:"password,omitempty"`
 	// Additional connection properties as query parameters (e.g., sslmode=disable)
 	ExtraParams string `json:"extraParams,omitempty"`
-	// Alternative to password
+	// Alternative to user and password properties; secret will have to contain USER and PASSWORD, optionally POSTGRES_URL
 	SecretName string `json:"secretName,omitempty"`
 }
 
