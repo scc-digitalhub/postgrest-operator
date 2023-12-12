@@ -142,13 +142,14 @@ func (r *PostgrestReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 		postgresUri, err := r.createConnectionString(postgrest, ctx)
 		if err != nil {
-			return ctrl.Result{}, err
+			log.Error(err, "Error while building connection string")
+			return setErrorState(r, ctx, postgrest, err)
 		}
 
 		err = createAnonRole(postgrest, ctx, postgresUri)
 		if err != nil {
-			log.Error(err, "error while handling anonymous role")
-			return ctrl.Result{}, err
+			log.Error(err, "Error while handling anon role")
+			return setErrorState(r, ctx, postgrest, err)
 		}
 
 		postgrest.Status.State = typeDeploying
@@ -189,15 +190,7 @@ func (r *PostgrestReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			secret, err := r.secretForPostgrest(postgrest, ctx)
 			if err != nil {
 				log.Error(err, "Failed to define new Secret resource for Postgrest")
-
-				postgrest.Status.State = typeError
-
-				if err := r.Status().Update(ctx, postgrest); err != nil {
-					log.Error(err, genericStatusUpdateFailedMessage)
-					return ctrl.Result{}, err
-				}
-
-				return ctrl.Result{}, err
+				return setErrorState(r, ctx, postgrest, err)
 			}
 			log.Info("Creating a new Secret", "Secret.Namespace", secret.Namespace, "Secret.Name", secret.Name)
 			if err = r.Create(ctx, secret); err != nil {
@@ -219,15 +212,7 @@ func (r *PostgrestReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			dep, err := r.deploymentForPostgrest(postgrest)
 			if err != nil {
 				log.Error(err, "Failed to define new Deployment resource for Postgrest")
-
-				postgrest.Status.State = typeError
-
-				if err := r.Status().Update(ctx, postgrest); err != nil {
-					log.Error(err, genericStatusUpdateFailedMessage)
-					return ctrl.Result{}, err
-				}
-
-				return ctrl.Result{}, err
+				return setErrorState(r, ctx, postgrest, err)
 			}
 
 			log.Info("Creating a new Deployment",
@@ -239,7 +224,6 @@ func (r *PostgrestReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			}
 		} else if err != nil {
 			log.Error(err, "failed to get deployment")
-			// Return error for reconciliation to be re-trigged
 			return ctrl.Result{}, err
 		}
 
@@ -341,7 +325,8 @@ func (r *PostgrestReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 		postgresUri, err := r.createConnectionString(postgrest, ctx)
 		if err != nil {
-			return ctrl.Result{}, err
+			log.Error(err, "Error while building connection string")
+			return setErrorState(r, ctx, postgrest, err)
 		}
 
 		secret := &corev1.Secret{}
@@ -476,6 +461,20 @@ func (r *PostgrestReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	// Auto-generated anonymous role is not deleted on error
 
 	return ctrl.Result{}, nil
+}
+
+func setErrorState(r *PostgrestReconciler, ctx context.Context, cr *operatorv1.Postgrest, err error) (ctrl.Result, error) {
+	log := log.FromContext(ctx)
+
+	cr.Status.State = typeError
+	cr.Status.Message = err.Error()
+
+	if err := r.Status().Update(ctx, cr); err != nil {
+		log.Error(err, genericStatusUpdateFailedMessage)
+		return ctrl.Result{}, err
+	}
+
+	return ctrl.Result{}, err
 }
 
 func crUpdated(dep *appsv1.Deployment, cr *operatorv1.Postgrest, newDatabaseUri string, oldDatabaseUri string) (bool, error) {
@@ -905,21 +904,31 @@ func (r *PostgrestReconciler) createConnectionString(postgrest *operatorv1.Postg
 			return "", err
 		}
 
-		//check if secret contains POSTGRES_URL
+		// Check if secret contains POSTGRES_URL
 		postgresUrlFromSecret := secret.Data["POSTGRES_URL"]
 		if postgresUrlFromSecret != nil {
-			//compare with host and database
+
+			// Parse POSTGRES_URL value as url
 			u, err := url.Parse(string(postgresUrlFromSecret))
 			if err != nil {
 				return "", fmt.Errorf("secret contains invalid POSTGRES_URL")
 			}
-			h, _, _ := net.SplitHostPort(u.Host)
-			if h != host || u.Path[1:] != database {
-				return "", fmt.Errorf("host or database in POSTGRES_URL does not match CR spec")
+
+			// If host contains colon symbol, split it, otherwise take it as-is
+			h := u.Host
+			if strings.Contains(h, ":") {
+				h, _, err = net.SplitHostPort(u.Host)
+				if err != nil {
+					return "", err
+				}
+			}
+			d := u.Path[1:]
+			if h != host || d != database {
+				return "", fmt.Errorf("host (" + h + ") or database (" + d + ") in POSTGRES_URL does not match CR spec")
 			}
 			return string(postgresUrlFromSecret), nil
 		} else {
-			//check that secret contains USER and PASSWORD
+			// Check that secret contains USER and PASSWORD
 			userFromSecret := secret.Data["USER"]
 			passwordFromSecret := secret.Data["PASSWORD"]
 			if userFromSecret == nil || passwordFromSecret == nil {
