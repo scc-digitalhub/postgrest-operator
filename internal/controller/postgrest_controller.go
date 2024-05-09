@@ -111,8 +111,8 @@ func (r *PostgrestReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	// Fetch the Postgrest instance
 	// The purpose is check if the Custom Resource for the Kind Postgrest
 	// is applied on the cluster if not we return nil to stop the reconciliation
-	postgrest := &operatorv1.Postgrest{}
-	err := r.Get(ctx, req.NamespacedName, postgrest)
+	cr := &operatorv1.Postgrest{}
+	err := r.Get(ctx, req.NamespacedName, cr)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
 			// If the custom resource is not found then, it usually means that it was deleted or not created
@@ -126,10 +126,10 @@ func (r *PostgrestReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	}
 
 	// If status is unknown, set Initializing
-	if postgrest.Status.State == "" {
+	if cr.Status.State == "" {
 		log.Info("State unspecified, updating to initializing")
-		postgrest.Status.State = typeInitializing
-		if err = r.Status().Update(ctx, postgrest); err != nil {
+		cr.Status.State = typeInitializing
+		if err = r.Status().Update(ctx, cr); err != nil {
 			log.Error(err, genericStatusUpdateFailedMessage)
 			return ctrl.Result{}, err
 		}
@@ -137,23 +137,23 @@ func (r *PostgrestReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{Requeue: true}, nil
 	}
 
-	if postgrest.Status.State == typeInitializing {
+	if cr.Status.State == typeInitializing {
 		log.Info("Creating anonymous role")
 
-		postgresUri, err := r.createConnectionString(postgrest, ctx)
+		postgresUri, err := r.createConnectionString(cr, ctx)
 		if err != nil {
 			log.Error(err, "Error while building connection string")
-			return setErrorState(r, ctx, postgrest, err)
+			return setErrorState(r, ctx, cr, err)
 		}
 
-		err = createAnonRole(postgrest, ctx, postgresUri)
+		err = createAnonRole(cr, ctx, postgresUri)
 		if err != nil {
 			log.Error(err, "Error while handling anon role")
-			return setErrorState(r, ctx, postgrest, err)
+			return setErrorState(r, ctx, cr, err)
 		}
 
-		postgrest.Status.State = typeDeploying
-		if err = r.Status().Update(ctx, postgrest); err != nil {
+		cr.Status.State = typeDeploying
+		if err = r.Status().Update(ctx, cr); err != nil {
 			log.Error(err, genericStatusUpdateFailedMessage)
 			return ctrl.Result{}, err
 		}
@@ -161,36 +161,36 @@ func (r *PostgrestReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{Requeue: true}, nil
 	}
 
-	if postgrest.Status.State == typeDeploying {
-		log.Info("Deploying and creating service")
+	if cr.Status.State == typeDeploying {
+		log.Info("Creating secret, deployment and service")
 
 		// Add finalizer
-		if !controllerutil.ContainsFinalizer(postgrest, postgrestFinalizer) {
+		if !controllerutil.ContainsFinalizer(cr, postgrestFinalizer) {
 			log.Info("Adding finalizer for Postgrest")
-			if ok := controllerutil.AddFinalizer(postgrest, postgrestFinalizer); !ok {
+			if ok := controllerutil.AddFinalizer(cr, postgrestFinalizer); !ok {
 				log.Error(err, "Failed to add finalizer into the custom resource")
 				return ctrl.Result{Requeue: true}, nil
 			}
 
-			if err = r.Update(ctx, postgrest); err != nil {
+			if err = r.Update(ctx, cr); err != nil {
 				log.Error(err, "Failed to update custom resource to add finalizer")
 				return ctrl.Result{}, err
 			}
 
-			if err := r.Get(ctx, req.NamespacedName, postgrest); err != nil {
+			if err := r.Get(ctx, req.NamespacedName, cr); err != nil {
 				log.Error(err, "Failed to re-fetch Postgrest")
 				return ctrl.Result{}, err
 			}
 		}
 
 		existingSecret := &corev1.Secret{}
-		err = r.Get(ctx, types.NamespacedName{Name: formatResourceName(postgrest.Name), Namespace: postgrest.Namespace}, existingSecret)
+		err = r.Get(ctx, types.NamespacedName{Name: formatResourceName(cr.Name), Namespace: cr.Namespace}, existingSecret)
 		if err != nil && apierrors.IsNotFound(err) {
 			// Create secret
-			secret, err := r.secretForPostgrest(postgrest, ctx)
+			secret, err := r.secretForPostgrest(cr, ctx)
 			if err != nil {
 				log.Error(err, "Failed to define new Secret resource for Postgrest")
-				return setErrorState(r, ctx, postgrest, err)
+				return setErrorState(r, ctx, cr, err)
 			}
 			log.Info("Creating a new Secret", "Secret.Namespace", secret.Namespace, "Secret.Name", secret.Name)
 			if err = r.Create(ctx, secret); err != nil {
@@ -205,14 +205,14 @@ func (r *PostgrestReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 		// Check if the deployment already exists, if not create a new one
 		found := &appsv1.Deployment{}
-		err = r.Get(ctx, types.NamespacedName{Name: formatResourceName(postgrest.Name), Namespace: postgrest.Namespace}, found)
+		err = r.Get(ctx, types.NamespacedName{Name: formatResourceName(cr.Name), Namespace: cr.Namespace}, found)
 		if err != nil && apierrors.IsNotFound(err) {
 
 			// Define a new deployment
-			dep, err := r.deploymentForPostgrest(postgrest)
+			dep, err := r.deploymentForPostgrest(cr)
 			if err != nil {
 				log.Error(err, "Failed to define new Deployment resource for Postgrest")
-				return setErrorState(r, ctx, postgrest, err)
+				return setErrorState(r, ctx, cr, err)
 			}
 
 			log.Info("Creating a new Deployment",
@@ -229,15 +229,15 @@ func (r *PostgrestReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 		// Create service
 		existingService := &corev1.Service{}
-		err = r.Get(ctx, types.NamespacedName{Name: formatResourceName(postgrest.Name), Namespace: postgrest.Namespace}, existingService)
+		err = r.Get(ctx, types.NamespacedName{Name: formatResourceName(cr.Name), Namespace: cr.Namespace}, existingService)
 		if err != nil && apierrors.IsNotFound(err) {
-			service, err := r.serviceForPostgrest(postgrest)
+			service, err := r.serviceForPostgrest(cr)
 			if err != nil {
 				log.Error(err, "Service inizialition failed")
 
-				postgrest.Status.State = typeError
+				cr.Status.State = typeError
 
-				if err := r.Status().Update(ctx, postgrest); err != nil {
+				if err := r.Status().Update(ctx, cr); err != nil {
 					log.Error(err, genericStatusUpdateFailedMessage)
 					return ctrl.Result{}, err
 				}
@@ -255,8 +255,8 @@ func (r *PostgrestReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			return ctrl.Result{}, err
 		}
 
-		postgrest.Status.State = typeRunning
-		if err = r.Status().Update(ctx, postgrest); err != nil {
+		cr.Status.State = typeRunning
+		if err = r.Status().Update(ctx, cr); err != nil {
 			log.Error(err, genericStatusUpdateFailedMessage)
 			return ctrl.Result{}, err
 		}
@@ -268,19 +268,19 @@ func (r *PostgrestReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 	// Check if the Postgrest instance is marked to be deleted, which is
 	// indicated by the deletion timestamp being set.
-	isPostgrestMarkedToBeDeleted := postgrest.GetDeletionTimestamp() != nil
+	isPostgrestMarkedToBeDeleted := cr.GetDeletionTimestamp() != nil
 	if isPostgrestMarkedToBeDeleted {
 		log.Info("Resource marked to be deleted")
-		if controllerutil.ContainsFinalizer(postgrest, postgrestFinalizer) {
+		if controllerutil.ContainsFinalizer(cr, postgrestFinalizer) {
 			log.Info("Performing Finalizer Operations for Postgrest before delete CR")
 
 			// Perform all operations required before remove the finalizer and allow
 			// the Kubernetes API to remove the custom resource.
-			postgresUri, err := r.createConnectionString(postgrest, ctx)
+			postgresUri, err := r.createConnectionString(cr, ctx)
 			if err != nil {
 				return ctrl.Result{}, err
 			}
-			if err := r.doFinalizerOperationsForPostgrest(postgrest, postgresUri); err != nil {
+			if err := r.doFinalizerOperationsForPostgrest(cr, postgresUri); err != nil {
 				log.Error(err, "Finalizer operations failed")
 				return ctrl.Result{Requeue: true}, nil
 			}
@@ -289,25 +289,25 @@ func (r *PostgrestReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			// so that we have the latest state of the resource on the cluster and we will avoid
 			// raise the issue "the object has been modified, please apply
 			// your changes to the latest version and try again" which would re-trigger the reconciliation
-			if err := r.Get(ctx, req.NamespacedName, postgrest); err != nil {
+			if err := r.Get(ctx, req.NamespacedName, cr); err != nil {
 				log.Error(err, "failed to re-fetch Postgrest")
 				return ctrl.Result{}, err
 			}
 
-			postgrest.Status.State = typeDegraded
+			cr.Status.State = typeDegraded
 
-			if err := r.Status().Update(ctx, postgrest); err != nil {
+			if err := r.Status().Update(ctx, cr); err != nil {
 				log.Error(err, genericStatusUpdateFailedMessage)
 				return ctrl.Result{}, err
 			}
 
 			log.Info("Removing Finalizer for Postgrest after successfully perform the operations")
-			if ok := controllerutil.RemoveFinalizer(postgrest, postgrestFinalizer); !ok {
+			if ok := controllerutil.RemoveFinalizer(cr, postgrestFinalizer); !ok {
 				log.Error(err, "failed to remove finalizer for Postgrest")
 				return ctrl.Result{Requeue: true}, nil
 			}
 
-			if err := r.Update(ctx, postgrest); err != nil {
+			if err := r.Update(ctx, cr); err != nil {
 				log.Error(err, "failed to remove finalizer for Postgrest")
 				return ctrl.Result{}, err
 			}
@@ -315,34 +315,43 @@ func (r *PostgrestReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{}, nil
 	}
 
-	if postgrest.Status.State == typeRunning {
-		dep := &appsv1.Deployment{}
-		err = r.Get(ctx, types.NamespacedName{Name: formatResourceName(postgrest.Name), Namespace: postgrest.Namespace}, dep)
+	if cr.Status.State == typeRunning {
+		// Check secret
+		secret := &corev1.Secret{}
+		err = r.Get(ctx, types.NamespacedName{Name: formatResourceName(cr.Name), Namespace: cr.Namespace}, secret)
 		if err != nil {
-			log.Error(err, "error while retrieving deployment")
-			return ctrl.Result{}, err
+			return handleMissingResource(r, ctx, cr, err)
 		}
 
-		postgresUri, err := r.createConnectionString(postgrest, ctx)
+		// Check deployment
+		dep := &appsv1.Deployment{}
+		err = r.Get(ctx, types.NamespacedName{Name: formatResourceName(cr.Name), Namespace: cr.Namespace}, dep)
+		if err != nil {
+			return handleMissingResource(r, ctx, cr, err)
+		}
+
+		// Check service
+		service := &corev1.Service{}
+		err = r.Get(ctx, types.NamespacedName{Name: formatResourceName(cr.Name), Namespace: cr.Namespace}, service)
+		if err != nil {
+			return handleMissingResource(r, ctx, cr, err)
+		}
+
+		// Generate connection string and check if resource has been updated
+		postgresUri, err := r.createConnectionString(cr, ctx)
 		if err != nil {
 			log.Error(err, "Error while building connection string")
-			return setErrorState(r, ctx, postgrest, err)
+			return setErrorState(r, ctx, cr, err)
 		}
 
-		secret := &corev1.Secret{}
-		err = r.Get(ctx, types.NamespacedName{Name: formatResourceName(postgrest.Name), Namespace: postgrest.Namespace}, secret)
-		if err != nil {
-			return ctrl.Result{}, err
-		}
-
-		updated, err := crUpdated(dep, postgrest, postgresUri, string(secret.Data[postgresUriSecretKey]))
+		updated, err := crUpdated(dep, cr, postgresUri, string(secret.Data[postgresUriSecretKey]))
 		if err != nil {
 			log.Error(err, "error while checking for update")
 			return ctrl.Result{}, err
 		}
 		if updated {
-			postgrest.Status.State = typeUpdating
-			if err = r.Status().Update(ctx, postgrest); err != nil {
+			cr.Status.State = typeUpdating
+			if err = r.Status().Update(ctx, cr); err != nil {
 				log.Error(err, genericStatusUpdateFailedMessage)
 				return ctrl.Result{}, err
 			}
@@ -351,7 +360,7 @@ func (r *PostgrestReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		// Deployment ready
 		if dep.Status.ReadyReplicas > 0 {
 			log.Info("Deployment is ready")
-			if err = r.Status().Update(ctx, postgrest); err != nil {
+			if err = r.Status().Update(ctx, cr); err != nil {
 				log.Error(err, genericStatusUpdateFailedMessage)
 				return ctrl.Result{}, err
 			}
@@ -362,9 +371,9 @@ func (r *PostgrestReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		// Wait up to 15 minutes for deployment to become ready
 		if dep.CreationTimestamp.Add(15 * time.Minute).Before(time.Now()) {
 			log.Info("Deployment still not ready, setting state to Error")
-			postgrest.Status.State = typeError
+			cr.Status.State = typeError
 
-			if err = r.Status().Update(ctx, postgrest); err != nil {
+			if err = r.Status().Update(ctx, cr); err != nil {
 				log.Error(err, genericStatusUpdateFailedMessage)
 				return ctrl.Result{}, err
 			}
@@ -374,17 +383,17 @@ func (r *PostgrestReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{RequeueAfter: time.Minute}, nil
 	}
 
-	if postgrest.Status.State == typeUpdating {
+	if cr.Status.State == typeUpdating {
 		log.Info("Updating: deleting previous deployment and anon role")
 
 		// Delete deployment
 		deployment := &appsv1.Deployment{}
-		err = r.Get(ctx, types.NamespacedName{Name: formatResourceName(postgrest.Name), Namespace: postgrest.Namespace}, deployment)
+		err = r.Get(ctx, types.NamespacedName{Name: formatResourceName(cr.Name), Namespace: cr.Namespace}, deployment)
 		if err == nil {
 			if err := r.Delete(ctx, deployment); err != nil {
 				log.Error(err, "Failed to clean up deployment")
 			}
-		} else if err != nil && !apierrors.IsNotFound(err) {
+		} else if !apierrors.IsNotFound(err) {
 			log.Error(err, "Failed to get deployment")
 			// Return error for reconciliation to be re-trigged
 			return ctrl.Result{}, err
@@ -392,20 +401,20 @@ func (r *PostgrestReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 		// Delete auto-generated anonRole
 		secret := &corev1.Secret{}
-		err = r.Get(ctx, types.NamespacedName{Name: formatResourceName(postgrest.Name), Namespace: postgrest.Namespace}, secret)
+		err = r.Get(ctx, types.NamespacedName{Name: formatResourceName(cr.Name), Namespace: cr.Namespace}, secret)
 		if err != nil {
 			return ctrl.Result{}, err
 		}
-		deleteAutoGeneratedAnonRole(postgrest, string(secret.Data[postgresUriSecretKey]))
+		deleteAutoGeneratedAnonRole(cr, string(secret.Data[postgresUriSecretKey]))
 
 		// Delete secret
 		if err := r.Delete(ctx, secret); err != nil {
 			log.Error(err, "Failed to clean up secret")
 		}
 
-		postgrest.Status.State = typeInitializing
+		cr.Status.State = typeInitializing
 
-		if err := r.Status().Update(ctx, postgrest); err != nil {
+		if err := r.Status().Update(ctx, cr); err != nil {
 			log.Error(err, genericStatusUpdateFailedMessage)
 			return ctrl.Result{}, err
 		}
@@ -413,17 +422,17 @@ func (r *PostgrestReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{Requeue: true}, nil
 	}
 
-	if postgrest.Status.State == typeError {
+	if cr.Status.State == typeError {
 		log.Info("Cleaning up secret, deployment and service")
 
 		// Delete service
 		service := &corev1.Service{}
-		err = r.Get(ctx, types.NamespacedName{Name: formatResourceName(postgrest.Name), Namespace: postgrest.Namespace}, service)
+		err = r.Get(ctx, types.NamespacedName{Name: formatResourceName(cr.Name), Namespace: cr.Namespace}, service)
 		if err == nil {
 			if err := r.Delete(ctx, service); err != nil {
 				log.Error(err, "Failed to clean up service")
 			}
-		} else if err != nil && !apierrors.IsNotFound(err) {
+		} else if !apierrors.IsNotFound(err) {
 			log.Error(err, "Failed to get service")
 			// Return error for reconciliation to be re-trigged
 			return ctrl.Result{}, err
@@ -431,12 +440,12 @@ func (r *PostgrestReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 		// Delete deployment
 		deployment := &appsv1.Deployment{}
-		err = r.Get(ctx, types.NamespacedName{Name: formatResourceName(postgrest.Name), Namespace: postgrest.Namespace}, deployment)
+		err = r.Get(ctx, types.NamespacedName{Name: formatResourceName(cr.Name), Namespace: cr.Namespace}, deployment)
 		if err == nil {
 			if err := r.Delete(ctx, deployment); err != nil {
 				log.Error(err, "Failed to clean up deployment")
 			}
-		} else if err != nil && !apierrors.IsNotFound(err) {
+		} else if !apierrors.IsNotFound(err) {
 			log.Error(err, "Failed to get deployment")
 			// Return error for reconciliation to be re-trigged
 			return ctrl.Result{}, err
@@ -444,12 +453,12 @@ func (r *PostgrestReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 		// Delete secret
 		secret := &corev1.Secret{}
-		err = r.Get(ctx, types.NamespacedName{Name: formatResourceName(postgrest.Name), Namespace: postgrest.Namespace}, secret)
+		err = r.Get(ctx, types.NamespacedName{Name: formatResourceName(cr.Name), Namespace: cr.Namespace}, secret)
 		if err == nil {
 			if err := r.Delete(ctx, secret); err != nil {
 				log.Error(err, "Failed to clean up secret")
 			}
-		} else if err != nil && !apierrors.IsNotFound(err) {
+		} else if !apierrors.IsNotFound(err) {
 			log.Error(err, "Failed to get secret")
 			// Return error for reconciliation to be re-trigged
 			return ctrl.Result{}, err
@@ -474,6 +483,23 @@ func setErrorState(r *PostgrestReconciler, ctx context.Context, cr *operatorv1.P
 		return ctrl.Result{}, err
 	}
 
+	return ctrl.Result{}, err
+}
+
+func handleMissingResource(r *PostgrestReconciler, ctx context.Context, cr *operatorv1.Postgrest, err error) (ctrl.Result, error) {
+	log := log.FromContext(ctx)
+
+	if apierrors.IsNotFound(err) {
+		cr.Status.State = typeDeploying
+		if err = r.Status().Update(ctx, cr); err != nil {
+			log.Error(err, genericStatusUpdateFailedMessage)
+			return ctrl.Result{}, err
+		}
+
+		return ctrl.Result{Requeue: true}, nil
+	}
+
+	log.Error(err, "error while retrieving resource")
 	return ctrl.Result{}, err
 }
 
@@ -695,8 +721,7 @@ func (r *PostgrestReconciler) doFinalizerOperationsForPostgrest(cr *operatorv1.P
 }
 
 // deploymentForPostgrest returns a Postgrest Deployment object
-func (r *PostgrestReconciler) deploymentForPostgrest(
-	postgrest *operatorv1.Postgrest) (*appsv1.Deployment, error) {
+func (r *PostgrestReconciler) deploymentForPostgrest(cr *operatorv1.Postgrest) (*appsv1.Deployment, error) {
 	image, found := os.LookupEnv(postgrestImage)
 	if !found {
 		image = "postgrest/postgrest"
@@ -706,15 +731,15 @@ func (r *PostgrestReconciler) deploymentForPostgrest(
 		tag = "latest"
 	}
 
-	ls := labelsForPostgrest(postgrest.Name, tag)
-	selectors := selectorsForPostgrest(postgrest.Name)
+	ls := labelsForPostgrest(cr.Name, tag)
+	selectors := selectorsForPostgrest(cr.Name)
 
 	envs := []corev1.EnvVar{
 		{
 			Name: "PGRST_DB_URI",
 			ValueFrom: &corev1.EnvVarSource{
 				SecretKeyRef: &corev1.SecretKeySelector{
-					LocalObjectReference: corev1.LocalObjectReference{Name: formatResourceName(postgrest.Name)},
+					LocalObjectReference: corev1.LocalObjectReference{Name: formatResourceName(cr.Name)},
 					Key:                  postgresUriSecretKey,
 					Optional:             &[]bool{false}[0],
 				},
@@ -722,23 +747,23 @@ func (r *PostgrestReconciler) deploymentForPostgrest(
 		},
 		{
 			Name:  "PGRST_DB_SCHEMAS",
-			Value: getSchema(postgrest),
+			Value: getSchema(cr),
 		},
 	}
 
 	var anonRole corev1.EnvVar
 	anonRole.Name = "PGRST_DB_ANON_ROLE"
-	if postgrest.Spec.AnonRole != "" {
-		anonRole.Value = postgrest.Spec.AnonRole
+	if cr.Spec.AnonRole != "" {
+		anonRole.Value = cr.Spec.AnonRole
 	} else {
-		anonRole.Value = cleanAnonRole(postgrest.Name)
+		anonRole.Value = cleanAnonRole(cr.Name)
 	}
 	envs = append(envs, anonRole)
 
 	dep := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      formatResourceName(postgrest.Name),
-			Namespace: postgrest.Namespace,
+			Name:      formatResourceName(cr.Name),
+			Namespace: cr.Namespace,
 			Labels:    ls,
 		},
 		Spec: appsv1.DeploymentSpec{
@@ -827,13 +852,13 @@ func (r *PostgrestReconciler) deploymentForPostgrest(
 
 	// Set the ownerRef for the Deployment
 	// More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/owners-dependents/
-	if err := ctrl.SetControllerReference(postgrest, dep, r.Scheme); err != nil {
+	if err := ctrl.SetControllerReference(cr, dep, r.Scheme); err != nil {
 		return nil, err
 	}
 	return dep, nil
 }
 
-func (r *PostgrestReconciler) serviceForPostgrest(postgrest *operatorv1.Postgrest) (*corev1.Service, error) {
+func (r *PostgrestReconciler) serviceForPostgrest(cr *operatorv1.Postgrest) (*corev1.Service, error) {
 	tag, found := os.LookupEnv(postgrestImageTag)
 	if !found {
 		tag = "latest"
@@ -849,13 +874,13 @@ func (r *PostgrestReconciler) serviceForPostgrest(postgrest *operatorv1.Postgres
 		return nil, errors.New("invalid service type")
 	}
 
-	ls := labelsForPostgrest(postgrest.Name, tag)
-	selectors := selectorsForPostgrest(postgrest.Name)
+	ls := labelsForPostgrest(cr.Name, tag)
+	selectors := selectorsForPostgrest(cr.Name)
 
 	service := &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      formatResourceName(postgrest.Name),
-			Namespace: postgrest.Namespace,
+			Name:      formatResourceName(cr.Name),
+			Namespace: cr.Namespace,
 			Labels:    ls,
 		},
 		Spec: corev1.ServiceSpec{
@@ -869,27 +894,27 @@ func (r *PostgrestReconciler) serviceForPostgrest(postgrest *operatorv1.Postgres
 		},
 	}
 
-	if err := ctrl.SetControllerReference(postgrest, service, r.Scheme); err != nil {
+	if err := ctrl.SetControllerReference(cr, service, r.Scheme); err != nil {
 		return nil, err
 	}
 
 	return service, nil
 }
 
-func (r *PostgrestReconciler) createConnectionString(postgrest *operatorv1.Postgrest, ctx context.Context) (string, error) {
-	host := postgrest.Spec.Connection.Host
+func (r *PostgrestReconciler) createConnectionString(cr *operatorv1.Postgrest, ctx context.Context) (string, error) {
+	host := cr.Spec.Connection.Host
 	if host == "" {
 		return "", fmt.Errorf("postgres host missing from spec")
 	}
 
-	database := postgrest.Spec.Connection.Database
+	database := cr.Spec.Connection.Database
 	if database == "" {
 		return "", fmt.Errorf("postgres database missing from spec")
 	}
 
-	user := postgrest.Spec.Connection.User
-	password := postgrest.Spec.Connection.Password
-	secretName := postgrest.Spec.Connection.SecretName
+	user := cr.Spec.Connection.User
+	password := cr.Spec.Connection.Password
+	secretName := cr.Spec.Connection.SecretName
 
 	// check that there is either password or secretName
 	if secretName != "" {
@@ -899,7 +924,7 @@ func (r *PostgrestReconciler) createConnectionString(postgrest *operatorv1.Postg
 
 		//read secret
 		secret := &corev1.Secret{}
-		err := r.Get(ctx, types.NamespacedName{Name: secretName, Namespace: postgrest.Namespace}, secret)
+		err := r.Get(ctx, types.NamespacedName{Name: secretName, Namespace: cr.Namespace}, secret)
 		if err != nil {
 			return "", err
 		}
@@ -942,8 +967,8 @@ func (r *PostgrestReconciler) createConnectionString(postgrest *operatorv1.Postg
 		return "", fmt.Errorf("specify both user and password")
 	}
 
-	port := postgrest.Spec.Connection.Port
-	queryParams := postgrest.Spec.Connection.ExtraParams
+	port := cr.Spec.Connection.Port
+	queryParams := cr.Spec.Connection.ExtraParams
 
 	if port != 0 {
 		host = fmt.Sprintf("%v:%v", host, port)
@@ -958,27 +983,27 @@ func (r *PostgrestReconciler) createConnectionString(postgrest *operatorv1.Postg
 	return postgresUri, nil
 }
 
-func (r *PostgrestReconciler) secretForPostgrest(postgrest *operatorv1.Postgrest, ctx context.Context) (*corev1.Secret, error) {
+func (r *PostgrestReconciler) secretForPostgrest(cr *operatorv1.Postgrest, ctx context.Context) (*corev1.Secret, error) {
 	tag, found := os.LookupEnv(postgrestImageTag)
 	if !found {
 		tag = "latest"
 	}
 
-	postgresUri, err := r.createConnectionString(postgrest, ctx)
+	postgresUri, err := r.createConnectionString(cr, ctx)
 	if err != nil {
 		return nil, err
 	}
 
 	secret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      formatResourceName(postgrest.Name),
-			Namespace: postgrest.Namespace,
-			Labels:    labelsForPostgrest(postgrest.Name, tag),
+			Name:      formatResourceName(cr.Name),
+			Namespace: cr.Namespace,
+			Labels:    labelsForPostgrest(cr.Name, tag),
 		},
 		StringData: map[string]string{postgresUriSecretKey: postgresUri},
 	}
 
-	if err := ctrl.SetControllerReference(postgrest, secret, r.Scheme); err != nil {
+	if err := ctrl.SetControllerReference(cr, secret, r.Scheme); err != nil {
 		return nil, err
 	}
 
@@ -1008,6 +1033,8 @@ func (r *PostgrestReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&operatorv1.Postgrest{}).
 		Owns(&appsv1.Deployment{}).
+		Owns(&corev1.Service{}).
+		Owns(&corev1.Secret{}).
 		Complete(r)
 }
 
