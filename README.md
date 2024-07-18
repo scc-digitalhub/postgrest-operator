@@ -23,44 +23,17 @@ A PostgREST custom resource's properties are:
 - `tables`: Do not set if you already set `anonRole`, otherwise required. List of tables within the schema to expose.
 - `grants`: *Optional*. Ignored if you already set `anonRole`. Comma-separated string listing actions permitted on tables. Defaults to `SELECT` if not specified. A "full" string is `INSERT, SELECT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER`, but you may also use `ALL`.
 - `connection`: **Required**. A structure to indicate the database to connect to. Its sub-properties are:
-  - `host`: **Required**.
+  - `host`: *Optional*. Must be provided if `secretName` is unspecified or the secret does not contain `POSTGREST_URL`.
   - `port`: *Optional*.
-  - `database`: **Required**.
+  - `database`: *Optional*. Must be provided if `secretName` is unspecified or the secret does not contain `POSTGREST_URL`.
   - `user`: Used with `password` to initialize PostgREST. Do not provide if `secretName` is provided.
   - `password`: Used with `user` to initialize PostgREST. Do not provide if `secretName` is provided.
   - `extraParams`: *Optional*. String for extra connection parameters, in the format `parameter1=value&parameter2=value`.
   - `secretName`: Name of a Kubernetes secret containing connection properties. Do not provide if `user` and `password` are provided. More information in a later section.
  
 Note that you must provide either `secretName`, or `user` and `password`, but if you provide the former, do not provide the latter two, and vice versa.
- 
-A valid sample spec configuration is:
-``` yaml
-...
-spec:
-  schema: operator
-  anonRole: anon
-  connection:
-    host: 192.168.123.123
-    database: postgres
-    user: postgres
-    password: postgres
-```
 
-Another valid sample:
-``` yaml
-...
-spec:
-  schema: operator
-  tables:
-    - test
-  grants: SELECT, UPDATE, INSERT, DELETE
-  connection:
-    host: 192.168.123.123
-    port: 5432
-    database: postgres
-    extraParams: sslmode=disable
-    secretName: mysecret
-```
+Note that the user you provide **must have permissions to handle roles** in the database.
 
 ## Using a K8S secret to authenticate
 
@@ -81,3 +54,44 @@ stringData:
 If you omit `POSTGRES_URL`, then `USER` and `PASSWORD` are required, but if you provide it, they will be ignored.
 
 `POSTGRES_URL` uses the format `postgresql://user:password@host:port/database?parameter1=value&parameter2=value` and *host* and *database* must match the values defined in the CR's `connection` properties.
+ 
+## Sample configurations
+
+A valid sample spec configuration is:
+``` yaml
+...
+spec:
+  schema: operator
+  anonRole: anon
+  connection:
+    host: 192.168.123.123
+    database: postgres
+    user: postgres
+    password: postgres
+```
+
+Another valid sample (the secret contains `POSTGRES_URL`):
+``` yaml
+...
+spec:
+  schema: operator
+  tables:
+    - test
+  grants: SELECT, UPDATE, INSERT, DELETE
+  connection:
+    secretName: mysecret
+```
+
+Another valid sample (the secret contains `USER` and `PASSWORD`):
+``` yaml
+...
+spec:
+  schema: operator
+  tables:
+    - test
+  grants: SELECT, UPDATE, INSERT, DELETE
+  connection:
+    host: 192.168.123.123
+    database: postgres
+    secretName: mysecret
+```
