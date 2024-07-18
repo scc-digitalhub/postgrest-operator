@@ -53,7 +53,10 @@ stringData:
 ```
 If you omit `POSTGRES_URL`, then `USER` and `PASSWORD` are required, but if you provide it, they will be ignored.
 
-`POSTGRES_URL` uses the format `postgresql://user:password@host:port/database?parameter1=value&parameter2=value` and *host* and *database* must match the values defined in the CR's `connection` properties.
+`POSTGRES_URL` uses the format:
+```
+postgresql://user:password@host:port/database?parameter1=value&parameter2=value
+```
  
 ## Sample configurations
 
