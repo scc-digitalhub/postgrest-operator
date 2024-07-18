@@ -89,6 +89,8 @@ spec:
           status:
             description: PostgREST status
             properties:
+              generatedAnonRole:
+                type: string
               state:
                 type: string
               message:

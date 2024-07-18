@@ -60,8 +60,9 @@ type ConnectionProperties struct {
 // PostgREST status
 type PostgrestStatus struct {
 	// +operator-sdk:csv:customresourcedefinitions:type=status
-	State   string `json:"state,omitempty" patchStrategy:"merge"`
-	Message string `json:"message,omitempty" patchStrategy:"merge"`
+	State             string `json:"state,omitempty" patchStrategy:"merge"`
+	Message           string `json:"message,omitempty" patchStrategy:"merge"`
+	GeneratedAnonRole string `json:"generatedAnonRole,omitempty" patchStrategy:"merge"`
 }
 
 //+kubebuilder:object:root=true
